@@ -2,7 +2,23 @@
 
 Website untuk **mencatat, mengelola, dan melanjutkan** riwayat cerita Wattpad yang kamu baca — semua dalam satu tempat. Tambah cerita, beri rating & status, pantau progres bab, baca langsung di dalam aplikasi, dan dapatkan notifikasi ketika ada bab baru.
 
-> Tanpa *database* dan tanpa dependensi npm — cukup **Node.js** dan semua data tersimpan sebagai file JSON lokal.
+> **Tanpa *database* dan tanpa dependensi npm** — cukup **Node.js** dan semua data tersimpan sebagai file JSON lokal.
+
+**Repo GitHub:** [github.com/bojams/Project-wattpad](https://github.com/bojams/Project-wattpad)
+
+---
+
+## 📑 Daftar Isi
+
+- [✨ Daftar Fitur](#-daftar-fitur)
+- [⏱️ Mulai Cepat (Clone & Jalankan)](#-mulai-cepat-clone--jalankan)
+- [🧰 Persyaratan](#-persyaratan)
+- [🚀 Cara Menjalankan](#-cara-menjalankan)
+- [📖 Panduan Penggunaan (Langkah demi Langkah)](#-panduan-penggunaan-langkah-demi-langkah)
+- [🗂️ Struktur Proyek](#-struktur-proyek)
+- [🔌 Referensi API](#-referensi-api)
+- [🛡️ Keamanan](#-keamanan)
+- [⚙️ Cara Kerja Fitur Wattpad](#-cara-kerja-fitur-wattpad)
 
 ---
 
@@ -45,21 +61,45 @@ Website untuk **mencatat, mengelola, dan melanjutkan** riwayat cerita Wattpad ya
 
 ---
 
+## ⏱️ Mulai Cepat (Clone & Jalankan)
+
+Punya Git dan Node.js di komputermu? Cukup 3 langkah:
+
+```bash
+# 1. Ambil source code dari GitHub
+git clone https://github.com/bojams/Project-wattpad.git
+cd Project-wattpad
+
+# 2. Jalankan server (tanpa npm install — sudah lengkap)
+node server.js
+
+# 3. Buka di browser
+#    http://localhost:3000
+```
+
+Selesai — aplikasi langsung jalan dan kamu bisa daftar akun lalu mulai mencatat cerita.
+
+---
+
 ## 🧰 Persyaratan
 
-- **Node.js ≥ 18** (tanpa npm install — memakai modul bawaan saja)
-- Browser modern (Chrome, Firefox, Edge, Safari)
+| Kebutuhan     | Keterangan                                        |
+| ------------- | ------------------------------------------------- |
+| **Node.js**   | Versi **≥ 18** (memakai modul bawaan, tanpa `npm install`) |
+| **git**       | Untuk clone (jika download ZIP, git tidak wajib)  |
+| **Browser**   | Modern: Chrome, Firefox, Edge, Safari             |
+
+Cek versi Node di terminal: `node -v` (harus keluar `v18.x` atau lebih baru).
+
+---
 
 ## 🚀 Cara Menjalankan
 
-```bash
-# 1. Masuk ke folder proyek
-cd hideo_wattpad
+### Jika sudah punya foldernya (tanpa clone)
 
-# 2. Jalankan server
-npm start
-# atau langsung:
-node server.js
+```bash
+cd Project-wattpad
+npm start          # atau langsung: node server.js
 ```
 
 Buka **http://localhost:3000** di browser.
@@ -159,16 +199,16 @@ Buka **menu profil** untuk:
 ## 🗂️ Struktur Proyek
 
 ```
-hideo_wattpad/
+Project-wattpad/
 ├── server.js            # Backend API + static file server (Node murni)
 ├── package.json
 ├── README.md
 ├── .env                 # Konfigurasi (tidak ikut di-commit)
-└── public/              # Frontend (di-serve server.js)
-    ├── index.html
-    ├── css/style.css
-    ├── js/app.js
-    └── favicon.svg
+├── public/              # Frontend (di-serve server.js)
+│   ├── index.html
+│   ├── css/style.css
+│   ├── js/app.js
+│   └── favicon.svg
 └── data/                # Dibuat otomatis saat server pertama dijalankan
     ├── users.json       # Daftar akun (email + hash sandi scrypt)
     ├── accounts/        # Data cerita & list per akun (1 file = 1 akun)
@@ -179,7 +219,7 @@ hideo_wattpad/
     └── backups/         # Backup otomatis (maks. 15 file, dirotasi)
 ```
 
-> **Penting**: folder `data/` dan file `.env` **tidak** di-commit ke GitHub — aman untuk repo publik.
+> **Penting**: folder `data/` dan file `.env` **tidak** ikut di-commit ke GitHub — aman untuk repo publik.
 
 ---
 
