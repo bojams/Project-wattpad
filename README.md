@@ -1,100 +1,242 @@
-# Hideo Wattpad
+# 📚 Hideo Wattpad
 
-Website untuk menyimpan dan mengelola riwayat cerita yang sudah kamu baca — lengkap dengan status baca, rating, progres bab, favorit, catatan, pencarian, filter, list kustom, dan backup otomatis.
+Website untuk **mencatat, mengelola, dan melanjutkan** riwayat cerita Wattpad yang kamu baca — semua dalam satu tempat. Tambah cerita, beri rating & status, pantau progres bab, baca langsung di dalam aplikasi, dan dapatkan notifikasi ketika ada bab baru.
 
-## Cara Menjalankan
+> Tanpa *database* dan tanpa dependensi npm — cukup **Node.js** dan semua data tersimpan sebagai file JSON lokal.
+
+---
+
+## ✨ Daftar Fitur
+
+### Manajemen Cerita
+- Tambah / edit / hapus cerita (judul, penulis, genre, status, rating bintang, progres bab, tautan Wattpad, cover, catatan)
+- **Ambil otomatis dari Wattpad**: tempel tautan `wattpad.com/story/…`, lalu judul, penulis, cover, jumlah bab, dan sinopsis terisi otomatis
+- Status baca: **Membaca**, **Ongoing**, **Selesai**, **Ditunda**, **Drop**
+- Rating 1–5 bintang dengan animasi
+
+### Membaca
+- **Reader internal**: baca bab penuh di dalam aplikasi tanpa pindah tab
+- Daftar bab otomatis dari Wattpad, navigasi **Sebelumnya / Berikutnya** (termasuk tombol panah keyboard)
+- Ukuran huruf **A− / A+**, posisi baca terakhir tersimpan per cerita
+- **Progres otomatis**: membuka bab ke-N otomatis menaikkan progres di kartu cerita (tidak pernah turun) dan tercatat rapi
+- Bar progres gradasi saat scroll, estimasi waktu baca, persentase + sisa waktu realtime
+
+### Pencarian & Filter
+- Statistik dashboard (total, sedang dibaca, ongoing, selesai)
+- Filter chip status & genre, pencarian instan (shortcut **`/`**)
+- Urutkan: terbaru, terlama, judul A–Z, rating tertinggi
+
+### List Kustom
+- Buat daftar sendiri (mis. "Rekomendasi", "Baca Ulang")
+- Kelompokkan satu cerita ke **beberapa list sekaligus**
+- Filter grid per list, dan kelola (buat / ganti nama / hapus) dari modal
+
+### Notifikasi Update
+- Deteksi bab baru secara otomatis (interval bisa diatur 5–1440 menit)
+- Badge notifikasi di dalam aplikasi + notifikasi browser saat tab tidak aktif
+- **Kirim ke Discord** via webhook (dengan ping role opsional)
+- Notifikasi *heartbeat* status server ke pemilik
+
+### Akun & Keamanan
+- Multi-akun dengan login — data tiap akun terpisah total
+- Kata sandi di-hash **scrypt** + sesi cookie **HttpOnly** bertanda tangan HMAC
+- Rate limiting, proteksi CSRF/CORS, anti-SSRF, anti-XSS
+- Backup otomatis setiap server dinyalakan
+
+---
+
+## 🧰 Persyaratan
+
+- **Node.js ≥ 18** (tanpa npm install — memakai modul bawaan saja)
+- Browser modern (Chrome, Firefox, Edge, Safari)
+
+## 🚀 Cara Menjalankan
 
 ```bash
-cd /home/bojam/project/hideo_wattpad
-npm start          # atau: node server.js
+# 1. Masuk ke folder proyek
+cd hideo_wattpad
+
+# 2. Jalankan server
+npm start
+# atau langsung:
+node server.js
 ```
 
 Buka **http://localhost:3000** di browser.
 
-Ganti port/host lewat environment variable:
+### Ganti port / host
 
 ```bash
 PORT=8080 HOST=127.0.0.1 node server.js
 ```
 
-> `HOST=127.0.0.1` membuat server hanya bisa diakses dari komputermu sendiri (lebih aman). Default `0.0.0.0` agar bisa dibuka dari HP dalam jaringan Wi-Fi yang sama.
+> `HOST=127.0.0.1` (default) membuat server hanya bisa diakses dari komputermu sendiri — lebih aman.
+> Pakai `HOST=0.0.0.0` jika ingin diakses dari HP/PC lain dalam satu jaringan Wi-Fi.
 
-Tanpa `npm install` — backend memakai modul bawaan Node.js (>= 18) saja.
+---
 
-## Fitur
+## 📖 Panduan Penggunaan (Langkah demi Langkah)
 
-- **Mode Baca di dalam aplikasi** — tombol *Baca* pada kartu cerita membuka pembaca layar penuh: daftar bab otomatis dari Wattpad, navigasi Sebelumnya/Berikutnya (juga tombol panah keyboard), ukuran huruf A-/A+, dan posisi bacaan terakhir tersimpan per cerita
-- **Progres baca ala Wattpad** — di bawah navbar pembaca tersedia bar gradasi yang terisi saat scroll, estimasi total waktu baca bab (±200 kata/menit), persentase terbaca + sisa waktu yang berkurang realtime (menit → detik), dan notifikasi saat bab selesai, dan keluar otomatis ke daftar cerita saat bab terakhir selesai dibaca
-- **Sinkronisasi otomatis "bab dibaca"** — membuka part ke-N otomatis menaikkan progres di kartu cerita (tidak pernah turun) dan langsung tersimpan ke server
-- **Ambil otomatis dari Wattpad** — tempel tautan `wattpad.com/story/…`, lalu judul, penulis, cover, jumlah bab, dan sinopsis terisi otomatis (tombol *Ambil* untuk paksa perbarui semua)
-- **List kustom** — buat daftar sendiri (mis. "Rekomendasi", "Baca Ulang"), kelompokkan cerita ke beberapa list sekaligus lewat form tambah/edit, filter grid per list via chip, dan kelola (buat/ganti nama/hapus) dari modal *Kelola List*
-- **Multi-akun dengan login** — setiap akun punya cerita & list sendiri yang terpisah total; kata sandi di-hash scrypt + sesi cookie HttpOnly bertanda tangan HMAC; data lama otomatis dipindahkan ke akun `adinata79177@gmail.com` saat didaftarkan
-- Tambah / edit / hapus cerita (judul, penulis, genre, status, rating bintang, progres bab, tautan Wattpad, cover URL, catatan)
-- Status baca: Membaca, Selesai, Ditunda, Drop
-- Dashboard statistik + filter chip status, genre, favorit, dan pencarian instan (shortcut `/`)
-- Urutkan: terbaru, terlama, judul A–Z, rating tertinggi
-- UI dark modern, responsif dari layar kecil sampai desktop, dukungan `prefers-reduced-motion` dan aksesibilitas dasar
+### 1. Daftar Akun & Masuk
 
-## Struktur
+1. Buka aplikasi → langsung muncul layar **Masuk / Daftar**.
+2. Klik tab **Daftar**, isi **email** dan **kata sandi**.
+   - Kata sandi: minimal 8 karakter, wajib mengandung huruf besar, huruf kecil, dan angka.
+3. Klik **Daftar** → sesi langsung aktif.
+4. Lain kali cukup klik **Masuk** dengan email & sandi yang sama.
+5. Untuk keluar: buka menu profil → **Keluar**.
+
+### 2. Tambah Cerita (Cara Cepat & Otomatis)
+
+**Cara otomatis dari Wattpad (paling mudah):**
+1. Klik tombol **+ Tambah Cerita** (atau kartu kosong di grid).
+2. Tempel tautan cerita Wattpad, contoh: `https://www.wattpad.com/story/1234567/judul-cerita`
+3. Klik **Ambil** (bulatan panah di samping kolom tautan).
+4. Judul, penulis, cover, jumlah bab, dan sinopsis terisi **otomatis**.
+5. Cukup pilih **status** dan klik **Simpan**.
+
+**Cara manual:**
+1. **+ Tambah Cerita** → isi formulir sendiri.
+2. Kolom wajib: **Judul**. Kolom lain opsional (penulis, genre, status, rating, progres, tautan, cover URL, catatan).
+3. Klik **Simpan**.
+
+> **Cover**: isi URL gambar `https://…` untuk memakai cover asli, atau kosongkan untuk tampil inisial judul berwarna.
+
+### 3. Kelola List Cerita
+
+List mirip folder untuk mengelompokkan cerita.
+
+- **Membuat list saat menambah/mengedit cerita**: di form cerita ada kolom *"List tersedia"* → tulis nama list baru → **Buat List**, lalu centang list mana yang diinginkan.
+- **Mengelola list**: dari tombol *Kelola List* → buat, ganti nama, atau hapus. Menghapus list **tidak** menghapus ceritanya.
+- **Memfilter per list**: klik chip nama list di atas grid untuk menampilkan hanya cerita dalam list itu.
+- Satu cerita bisa masuk ke **beberapa list** sekaligus.
+
+### 4. Membaca Bab di Dalam Aplikasi
+
+1. Pada kartu cerita yang punya tautan Wattpad, klik tombol **Baca**.
+2. Pembaca layar penuh terbuka → daftar bab tampil di samping.
+3. Pilih bab, atau navigasi dengan **Sebelumnya / Berikutnya** / tombol **panah ← →** keyboard.
+4. Atur kenyamanan: tombol **A− / A+** untuk ukuran huruf.
+5. Posisi baca terakhir **tersimpan otomatis** — buka lagi cerita yang sama akan kembali ke bab terakhir.
+6. Progres **bab dibaca** di kartu cerita ikut naik otomatis dan langsung tersimpan.
+7. Saat bab terakhir selesai, kamu otomatis dikembalikan ke daftar cerita.
+
+### 5. Mencari, Memfilter, Mengurutkan
+
+- **Cari**: tekan **`/`** lalu ketik — hasil menyaring secara langsung (judul, penulis, genre).
+- **Filter status**: chip Membaca / Ongoing / Selesai / Ditunda / Drop.
+- **Filter genre**: pilih genre dari daftar chip.
+- **Urutkan**: dropdown urutan — terbaru, terlama, A–Z, rating tertinggi.
+
+### 6. Melihat Statistik
+
+Di bagian atas beranda tersedia kartu ringkasan: **Total Cerita**, **Sedang Dibaca**, **Ongoing**, **Selesai**. Angka ini ter-update otomatis setiap kali kamu menambah/mengedit cerita.
+
+### 7. Nyalakan Notifikasi Update Cerita
+
+1. Klik **ikon lonceng** di pojok kanan atas.
+2. Klik **Cek sekarang** untuk memeriksa bab baru saat itu juga.
+3. Klik **"Aktifkan notifikasi browser"** agar mendapat peringatan walau tab tidak aktif (opsional).
+4. Badge merah menunjukkan jumlah cerita yang punya bab baru; klik **"Tandai dibaca"** untuk menutupnya.
+
+**Kirim notifikasi ke Discord:**
+1. Buat webhook di server Discord (`Pengaturan Server → Integrations → Webhooks`).
+2. Salin URL webhook.
+3. Buka **Profil** → tempel di kolom *Webhook Discord* → centang aktifkan → **Uji Webhook** untuk memastikan.
+4. (Opsional) isi *Role ID* agar bisa ping role tertentu.
+5. Atur **Interval Pengecekan** (5–1440 menit) sesuai keinginan.
+
+### 8. Pengaturan Akun & Profil
+
+Buka **menu profil** untuk:
+- Ganti **nama tampilan** & **foto profil**
+- Ubah **kata sandi** (perlu sandi lama; semua sesi lain otomatis berakhir)
+- Atur **webhook Discord**, **role ID**, dan **interval pengecekan**
+- **Keluar** dari akun
+
+---
+
+## 🗂️ Struktur Proyek
 
 ```
 hideo_wattpad/
 ├── server.js            # Backend API + static file server (Node murni)
 ├── package.json
-├── public/              # Frontend
-│   ├── index.html
-│   ├── css/style.css
-│   ├── js/app.js
-│   └── favicon.svg
-└── data/
-    ├── users.json       # Daftar akun (email + hash kata sandi)
+├── README.md
+├── .env                 # Konfigurasi (tidak ikut di-commit)
+└── public/              # Frontend (di-serve server.js)
+    ├── index.html
+    ├── css/style.css
+    ├── js/app.js
+    └── favicon.svg
+└── data/                # Dibuat otomatis saat server pertama dijalankan
+    ├── users.json       # Daftar akun (email + hash sandi scrypt)
     ├── accounts/        # Data cerita & list per akun (1 file = 1 akun)
     ├── session-secret   # Kunci penandatanganan sesi (dibuat otomatis)
-    ├── stories.json     # Data lama (sudah dimigrasi, disimpan sebagai cadangan)
-    └── backups/         # Backup otomatis (saat server dinyalakan, maks 15 file)
+    ├── updates.json     # Status pembaruan / terakhir dicek
+    ├── heartbeat.json   # Status server (untuk notifikasi pemilik)
+    ├── stories.json     # Data lama (cadangan dari versi sebelumnya)
+    └── backups/         # Backup otomatis (maks. 15 file, dirotasi)
 ```
 
-## Keamanan
+> **Penting**: folder `data/` dan file `.env` **tidak** di-commit ke GitHub — aman untuk repo publik.
+
+---
+
+## 🔌 Referensi API
+
+Semua endpoint di bawah prefix `/api` dan butuh sesi login (kecuali `login`/`register`).
+
+| Metode  | Endpoint                 | Keterangan                              |
+| ------- | ------------------------ | --------------------------------------- |
+| POST    | `/api/auth/register`     | Daftar akun baru                        |
+| POST    | `/api/auth/login`        | Masuk (set cookie sesi)                 |
+| POST    | `/api/auth/logout`       | Keluar (mencabut semua sesi)            |
+| GET     | `/api/auth/me`           | Cek sesi aktif                          |
+| PUT     | `/api/auth/profile`      | Perbarui profil (nama, foto, webhook, interval) |
+| POST    | `/api/auth/password`     | Ubah kata sandi                         |
+| POST    | `/api/auth/test-webhook` | Kirim pesan uji ke webhook Discord      |
+| POST    | `/api/auth/check-webhook`| Periksa validitas webhook Discord       |
+| GET     | `/api/stories`           | Ambil semua cerita                      |
+| POST    | `/api/stories`           | Tambah cerita                           |
+| PUT     | `/api/stories/:id`       | Update cerita (mis. progres bab)        |
+| DELETE  | `/api/stories/:id`       | Hapus cerita                            |
+| GET     | `/api/lists`             | Ambil semua list                        |
+| POST    | `/api/lists`             | Buat list baru                          |
+| PUT     | `/api/lists/:id`         | Ganti nama list                         |
+| DELETE  | `/api/lists/:id`         | Hapus list (cerita di dalamnya aman)    |
+| POST    | `/api/wattpad`           | Ambil metadata cerita dari Wattpad      |
+| GET     | `/api/wattpad/:id/parts` | Daftar bab cerita                       |
+| GET     | `/api/wattpad/part/:id`  | Isi teks satu bab                       |
+| GET     | `/api/updates`           | Daftar pembaruan & status cek           |
+| POST    | `/api/updates/check`     | Cek otomatis bab baru sekarang          |
+| POST    | `/api/updates/seen`      | Tandai notifikasi sudah dibaca          |
+
+---
+
+## 🛡️ Keamanan
 
 - **Zero dependensi** — tidak ada risiko supply-chain dari package pihak ketiga
-- **CSP ketat**: `script-src 'self'`, tanpa inline script/style; semua konten user dirender via `textContent` (tahan XSS by construction)
-- **Validasi & sanitasi input di sisi server**: tipe, panjang maksimal, whitelist enum status, validasi skema URL (`http`/`https`)
-- **Rate limiting** 240 req/menit per IP untuk API
-- **Proteksi CSRF/CORS**: cek header `Origin` dan `Sec-Fetch-Site` pada semua mutasi; tanpa cookie berarti tidak ada credential yang bisa disalahkan
-- **Body limit** 64 KB + parsing JSON aman
-- **Path traversal protection** pada static file server
-- **Security headers**: `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP/CORP
-- **Penyimpanan atomik** (tmp + rename) agar data tidak korup saat ditulis; auto-recovery dari folder backup jika file rusak
-- Link eksternal memakai `rel="noopener noreferrer nofollow"` dan gambar cover dengan `referrerpolicy="no-referrer"`
+- **Kata sandi** di-hash dengan **scrypt** + salt acak per akun; login memakai perbandingan waktu-konstan (anti timing-attack)
+- **Sesi** cookie `HttpOnly`, `SameSite=Lax`, ditandatangani HMAC dengan TTL 30 hari; berakhir saat ganti sandi/keluar
+- **Anti-XSS**: CSP ketat (`script-src 'self'`, tanpa inline script/style) + semua konten user dirender via `textContent`
+- **Anti-SSRF**: permintaan ke Wattpad hanya boleh ke host `wattpad.com` yang disetujui; redirect divalidasi ulang per-hop
+- **Anti-CSRF**: cek header `Origin` & `Sec-Fetch-Site` pada semua operasi mutasi
+- **Rate limiting**: batas per-IP per endpoint (mis. login/register 5/menit, API umum 300/menit)
+- **Validasi input**: tipe, panjang maksimal, whitelist enum, validasi skema URL
+- **Path traversal protection** pada static file server; body dibatasi 64 KB
+- **Security headers**: `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP/CORP, HSTS
+- **Penyimpanan atomik** (tmp + rename) agar data tidak korup; backup otomatis & auto-recovery
 
-## API
+---
 
-| Method | Endpoint              | Keterangan                    |
-| ------ | --------------------- | ----------------------------- |
-| GET    | `/api/stories`        | Ambil semua cerita            |
-| POST   | `/api/stories`        | Tambah cerita                 |
-| PUT    | `/api/stories/:id`    | Update cerita                 |
-| DELETE | `/api/stories/:id`    | Hapus cerita                  |
+## ⚙️ Cara Kerja Fitur Wattpad
 
-| POST   | `/api/auth/register`  | Daftar akun baru              |
-| POST   | `/api/auth/login`     | Masuk                         |
-| POST   | `/api/auth/logout`    | Keluar                        |
-| GET    | `/api/auth/me`        | Cek sesi aktif                |
-| PUT    | `/api/auth/profile`   | Perbarui nama tampilan        |
-| POST   | `/api/auth/password`  | Ubah kata sandi               |
-| GET    | `/api/lists`          | Ambil semua list              |
-| POST   | `/api/lists`          | Buat list baru                |
-| PUT    | `/api/lists/:id`      | Ganti nama list               |
-| DELETE | `/api/lists/:id`      | Hapus list (cerita aman)      |
-| POST   | `/api/wattpad`        | Ambil metadata cerita dari Wattpad |
-| GET    | `/api/wattpad/:id/parts` | Daftar bab cerita               |
-| GET    | `/api/wattpad/part/:id`  | Isi teks satu bab               |
+1. Server mengekstrak **ID cerita** dari tautan (hanya host `wattpad.com`, `www.wattpad.com`, `m.wattpad.com` dengan path `/story/…`).
+2. **Metadata & daftar bab** diambil dari API internal Wattpad (`api/v3/stories/{id}`); **isi bab** dari `apiv2/storytext`.
+3. Jika API gagal, ada *fallback* scraping dari tag meta / JSON-LD halaman cerita.
+4. Hasil di-cache (bab 10 menit, teks 30 menit), dibatasi ukuran & timeout, dengan rate limit terpisah.
+5. Isi bab dirender sebagai **paragraf polos** via `textContent` — aman walau bersumber dari pihak ketiga.
+6. Saat membuka part ke-N, progres otomatis tersimpan; sistem notifikasi me-laporkan ketika `jumlah bab terbaru > jumlah yang diketahui`.
 
-## Cara Kerja Mode Baca & Ambil Otomatis
-
-1. Server mengambil ID cerita dari tautan (hanya host `wattpad.com|www|m`, path `/story/…` — proteksi SSRF).
-2. Metadata & daftar bab dari endpoint internal resmi Wattpad (`api/v3/stories/{id}`); isi bab dari `apiv2/storytext`; jika API gagal, fallback ke scraping JSON-LD/meta tag.
-3. Hasil dicache (bab 10 menit, teks bab 30 menit), rate limit terpisah per jenis (30–120 req/menit), timeout 12 detik, respons dibatasi 1,5–3 MB, redirect hanya boleh ke domain Wattpad.
-4. Teks bab dirender sebagai paragraf polos via `textContent` — aman dari XSS meski sumbernya pihak ketiga.
-
-> Catatan: fitur ini bergantung pada struktur internal Wattpad yang dapat berubah sewaktu-waktu; jika gagal, kolom tetap bisa diisi manual.
+> Fitur ini bergantung pada struktur internal Wattpad yang bisa berubah sewaktu-waktu; jika satu metode gagal, _fallback_ otomatis dijalankan, dan kita masih bisa mencatat cerita secara manual.
