@@ -54,6 +54,7 @@
   let lastFocus = null;
   let fetchingStory = false;
   let lastAutoFetchKey = '';
+  let animatePageNext = false;
   const PER_PAGE = 10;
   const MAX_PAGE_BUTTONS = 7;
   const WATTPAD_URL_RE = /^https?:\/\/(www\.|m\.)?wattpad\.com\/story\/[A-Za-z0-9][^#\s]*(?:#.*)?$/i;
@@ -581,7 +582,12 @@
     if (state.page > totalPages) state.page = totalPages;
     const start = (state.page - 1) * PER_PAGE;
     const pageItems = list.slice(start, start + PER_PAGE);
-    els.grid.classList.add('page-anim');
+    if (animatePageNext) {
+      els.grid.classList.remove('page-anim');
+      void els.grid.offsetWidth;
+      els.grid.classList.add('page-anim');
+      animatePageNext = false;
+    }
     els.grid.replaceChildren(...pageItems.map((s, i) => buildCard(s, i)));
     renderPagination(totalPages, list.length);
   }
@@ -593,6 +599,8 @@
       return;
     }
     els.pagination.hidden = false;
+    const bar = document.createElement('div');
+    bar.className = 'pagination-inner';
     const frag = document.createDocumentFragment();
     frag.appendChild(buildPgButton('prev', state.page === 1, 'Halaman sebelumnya', '←'));
     const pages = pageWindow(state.page, totalPages);
@@ -606,8 +614,19 @@
         frag.appendChild(buildPgButton(p, p === state.page, `Halaman ${p}`, String(p)));
       }
     }
+    const sep = document.createElement('span');
+    sep.className = 'pg-sep';
+    sep.setAttribute('aria-hidden', 'true');
+    frag.appendChild(sep);
     frag.appendChild(buildPgButton('next', state.page === totalPages, 'Halaman berikutnya', '→'));
-    els.pagination.replaceChildren(frag);
+    bar.appendChild(frag);
+    const counter = document.createElement('span');
+    counter.className = 'pg-counter';
+    counter.setAttribute('aria-live', 'polite');
+    counter.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`;
+    counter.appendChild(document.createTextNode(`${state.page} / ${totalPages}`));
+    bar.appendChild(counter);
+    els.pagination.replaceChildren(bar);
   }
 
   function buildPgButton(target, disabled, label, content) {
@@ -1932,6 +1951,7 @@ reader.celebrated = false;
     else next = Number(target);
     if (next < 1 || next > totalPages || next === state.page) return;
     state.page = next;
+    animatePageNext = true;
     renderGrid();
     els.grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
