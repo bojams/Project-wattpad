@@ -540,6 +540,7 @@
   function renderGrid() {
     const list = applyFilters();
     if (!state.loaded && !state.loadFailed) {
+      els.grid.classList.remove('page-anim');
       els.grid.replaceChildren(
         ...Array.from({ length: 8 }, () => {
           const sk = document.createElement('div');
@@ -547,12 +548,14 @@
           return sk;
         })
       );
+      els.pagination.hidden = true;
       els.empty.hidden = true;
       return;
     }
     if (list.length === 0) {
       els.grid.replaceChildren();
       els.empty.hidden = false;
+      els.pagination.hidden = true;
       if (!state.loaded) {
         els.emptyTitle.textContent = state.loadFailed ? 'Gagal memuat data' : 'Memuat…';
         els.emptyText.textContent = state.loadFailed
@@ -574,7 +577,72 @@
       return;
     }
     els.empty.hidden = true;
-    els.grid.replaceChildren(...list.map((s, i) => buildCard(s, i)));
+    const totalPages = Math.max(1, Math.ceil(list.length / PER_PAGE));
+    if (state.page > totalPages) state.page = totalPages;
+    const start = (state.page - 1) * PER_PAGE;
+    const pageItems = list.slice(start, start + PER_PAGE);
+    els.grid.classList.add('page-anim');
+    els.grid.replaceChildren(...pageItems.map((s, i) => buildCard(s, i)));
+    renderPagination(totalPages, list.length);
+  }
+
+  function renderPagination(totalPages, totalItems) {
+    if (totalPages <= 1) {
+      els.pagination.hidden = true;
+      els.pagination.replaceChildren();
+      return;
+    }
+    els.pagination.hidden = false;
+    const frag = document.createDocumentFragment();
+    frag.appendChild(buildPgButton('prev', state.page === 1, 'Halaman sebelumnya', '←'));
+    const pages = pageWindow(state.page, totalPages);
+    for (const p of pages) {
+      if (p === null) {
+        const dots = document.createElement('span');
+        dots.className = 'pg-ellipsis';
+        dots.textContent = '…';
+        frag.appendChild(dots);
+      } else {
+        frag.appendChild(buildPgButton(p, p === state.page, `Halaman ${p}`, String(p)));
+      }
+    }
+    frag.appendChild(buildPgButton('next', state.page === totalPages, 'Halaman berikutnya', '→'));
+    els.pagination.replaceChildren(frag);
+  }
+
+  function buildPgButton(target, disabled, label, content) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pg-btn' + (target !== 'prev' && target !== 'next' && target === state.page ? ' active' : '');
+    if (disabled) btn.disabled = true;
+    btn.dataset.page = target;
+    btn.setAttribute('aria-label', label);
+    if (target === 'prev') {
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>';
+    } else if (target === 'next') {
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>';
+    } else {
+      btn.textContent = content;
+    }
+    return btn;
+  }
+
+  function pageWindow(current, total) {
+    const out = [];
+    const span = Math.floor(MAX_PAGE_BUTTONS / 2);
+    let lo = Math.max(1, Math.min(current - span, total - MAX_PAGE_BUTTONS + 1));
+    let hi = Math.min(total, lo + MAX_PAGE_BUTTONS - 1);
+    if (hi - lo < MAX_PAGE_BUTTONS - 1) lo = Math.max(1, hi - MAX_PAGE_BUTTONS + 1);
+    if (lo > 1) {
+      out.push(1);
+      if (lo > 2) out.push(null);
+    }
+    for (let i = lo; i <= hi; i++) out.push(i);
+    if (hi < total) {
+      if (hi < total - 1) out.push(null);
+      out.push(total);
+    }
+    return out;
   }
 
   function renderAll() {
@@ -826,7 +894,10 @@
   function mergeStory(story) {
     const i = state.stories.findIndex((s) => s.id === story.id);
     if (i >= 0) state.stories[i] = story;
-    else state.stories.push(story);
+    else {
+      state.stories.push(story);
+      state.page = 1;
+    }
     renderAll();
   }
 
@@ -1770,6 +1841,7 @@ reader.celebrated = false;
     const chip = e.target.closest('.chip');
     if (!chip) return;
     state.status = chip.dataset.status;
+    state.page = 1;
     renderChips();
     renderGrid();
   });
@@ -1778,6 +1850,7 @@ reader.celebrated = false;
     const chip = e.target.closest('.chip[data-list-id]');
     if (!chip) return;
     state.filterList = state.filterList === chip.dataset.listId ? null : chip.dataset.listId;
+    state.page = 1;
     renderListUI();
     renderGrid();
   });
@@ -1844,8 +1917,24 @@ reader.celebrated = false;
 
   els.searchInput.addEventListener('input', debounce(() => {
     state.q = els.searchInput.value;
+    state.page = 1;
     renderGrid();
   }, 160));
+
+  els.pagination.addEventListener('click', (e) => {
+    const btn = e.target.closest('.pg-btn');
+    if (!btn || btn.disabled) return;
+    const target = btn.dataset.page;
+    const totalPages = Math.max(1, Math.ceil(applyFilters().length / PER_PAGE));
+    let next = state.page;
+    if (target === 'prev') next = state.page - 1;
+    else if (target === 'next') next = state.page + 1;
+    else next = Number(target);
+    if (next < 1 || next > totalPages || next === state.page) return;
+    state.page = next;
+    renderGrid();
+    els.grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 
   $('#btnAdd').addEventListener('click', () => openStoryModal(null));
   $('#fabAdd').addEventListener('click', () => openStoryModal(null));
