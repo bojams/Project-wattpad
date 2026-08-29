@@ -537,7 +537,7 @@ select option { background: var(--bg-soft); color: var(--text); }
 /* ── 10. Stats Section ──────────────────────────────── */
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
   margin: 20px 0;
 }
@@ -560,6 +560,7 @@ select option { background: var(--bg-soft); color: var(--text); }
   height: 40px;
   border-radius: 12px;
   flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px currentColor;
 }
 .stat-icon svg { width: 20px; height: 20px; }
 .tint-blue { background: rgba(76,194,255,0.12); color: var(--blue); }
@@ -915,6 +916,73 @@ select option { background: var(--bg-soft); color: var(--text); }
 @keyframes emptyFloat {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-6px); }
+}
+
+/* ── 13b. Pagination ───────────────────────────────── */
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin: 24px 0 8px;
+  flex-wrap: wrap;
+}
+.pg-btn {
+  min-width: 38px;
+  height: 38px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+  background: rgba(255,255,255,0.04);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.pg-btn svg { width: 16px; height: 16px; }
+.pg-btn:hover:not(:disabled):not(.active) {
+  border-color: var(--accent);
+  background: rgba(255,80,10,0.08);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+.pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.pg-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 4px 14px rgba(255,80,10,0.35);
+  animation: pgPop 0.3s var(--ease-spring);
+}
+.pg-ellipsis { color: var(--muted); font-size: 0.85rem; padding: 0 2px; user-select: none; }
+
+@keyframes pgPop {
+  0% { transform: scale(0.85); }
+  60% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+.grid.page-anim .card {
+  animation: pageSlideIn 0.35s var(--ease-spring) backwards;
+}
+.grid.page-anim .card:nth-child(2) { animation-delay: 0.03s; }
+.grid.page-anim .card:nth-child(3) { animation-delay: 0.06s; }
+.grid.page-anim .card:nth-child(4) { animation-delay: 0.09s; }
+.grid.page-anim .card:nth-child(5) { animation-delay: 0.12s; }
+.grid.page-anim .card:nth-child(6) { animation-delay: 0.15s; }
+.grid.page-anim .card:nth-child(7) { animation-delay: 0.18s; }
+.grid.page-anim .card:nth-child(8) { animation-delay: 0.21s; }
+.grid.page-anim .card:nth-child(9) { animation-delay: 0.24s; }
+.grid.page-anim .card:nth-child(10) { animation-delay: 0.27s; }
+
+@keyframes pageSlideIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* ── 14. Skeleton Loading ────────────────────────────── */

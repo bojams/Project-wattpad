@@ -46,19 +46,23 @@
     loadFailed: false,
     q: '',
     status: 'semua',
-    sort: 'terbaru'
+    sort: 'terbaru',
+    page: 1
   };
 
   let pendingDeleteId = null;
   let lastFocus = null;
   let fetchingStory = false;
   let lastAutoFetchKey = '';
+  const PER_PAGE = 10;
+  const MAX_PAGE_BUTTONS = 7;
   const WATTPAD_URL_RE = /^https?:\/\/(www\.|m\.)?wattpad\.com\/story\/[A-Za-z0-9][^#\s]*(?:#.*)?$/i;
   const EMAIL_CLIENT_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
   const els = {
     grid: $('#grid'),
     empty: $('#emptyState'),
+    pagination: $('#pagination'),
     emptyTitle: $('#emptyTitle'),
     emptyText: $('#emptyText'),
     btnRetry: $('#btnRetry'),
@@ -66,6 +70,7 @@
     statReading: $('#statReading'),
     statOngoing: $('#statOngoing'),
     statDone: $('#statDone'),
+    statPaused: $('#statPaused'),
     statusChips: $('#statusChips'),
     sortSelect: null,
     searchInput: $('#searchInput'),
@@ -507,6 +512,7 @@
     setStat(els.statReading, s.filter((x) => x.status === 'membaca').length);
     setStat(els.statOngoing, s.filter((x) => x.status === 'ongoing').length);
     setStat(els.statDone, s.filter((x) => x.status === 'selesai').length);
+    setStat(els.statPaused, s.filter((x) => x.status === 'ditunda').length);
   }
 
   function renderChips() {
