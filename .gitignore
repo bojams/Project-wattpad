@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Data & secrets (JANGAN commit — berisi akun, password hash, webhook, dsb.)
+data/
+*.local
+
+# Environ
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Sistem
+.DS_Store
+Thumbs.db
+
+# Editor/IDE
+.idea/
+.vscode/
+
+# Temp
+*.tmp
+*.swp
