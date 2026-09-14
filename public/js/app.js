@@ -1986,7 +1986,7 @@ reader.celebrated = false;
     state.page = next;
     animatePageNext = true;
     renderGrid();
-    els.grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 
   $('#btnAdd').addEventListener('click', () => openStoryModal(null));
