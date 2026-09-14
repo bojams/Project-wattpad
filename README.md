@@ -113,6 +113,24 @@ PORT=8080 HOST=127.0.0.1 node server.js
 > `HOST=127.0.0.1` (default) membuat server hanya bisa diakses dari komputermu sendiri — lebih aman.
 > Pakai `HOST=0.0.0.0` jika ingin diakses dari HP/PC lain dalam satu jaringan Wi-Fi.
 
+**Jika di belakang reverse proxy (nginx, Caddy, Cloudflare):**
+
+```bash
+TRUST_PROXY=1 node server.js
+```
+
+- `TRUST_PROXY=1` → server memercayai header `X-Forwarded-For`, `CF-Connecting-IP`, dan `X-Forwarded-Proto` dari proxy (untuk IP rate-limit yang akurat dan cookie `Secure` di HTTPS). **Gunakan hanya jika memang di belakang proxy tepercaya.**
+- Tanpa `TRUST_PROXY`, hanya koneksi dari `127.0.0.1` yang diperlakukan sebagai proxy tepercaya.
+
+**Opsional (notifikasi update):**
+
+```bash
+UPDATE_CHECK_LIMIT=5000  # maks. cerita yang dicek per siklus (default: semua/5000)
+UPDATE_CHECK_DELAY_MS=350 # jeda antar-pemeriksaan cerita (dengan variasi acak)
+```
+
+Cek dilakukan **otomatis berkala** untuk semua cerita: tiap siklus memeriksa seluruh cerita (termasuk yang tidak masuk list) hingga `UPDATE_CHECK_LIMIT`. Tombol **Cek sekarang** juga memeriksa seluruh cerita sekaligus.
+
 ---
 
 ## 📖 Panduan Penggunaan (Langkah demi Langkah)
@@ -235,6 +253,7 @@ Semua endpoint di bawah prefix `/api` dan butuh sesi login (kecuali `login`/`reg
 | GET     | `/api/auth/me`           | Cek sesi aktif                          |
 | PUT     | `/api/auth/profile`      | Perbarui profil (nama, foto, webhook, interval) |
 | POST    | `/api/auth/password`     | Ubah kata sandi                         |
+| DELETE  | `/api/auth/account`      | Hapus akun & semua datanya (perlu sandi)|
 | POST    | `/api/auth/test-webhook` | Kirim pesan uji ke webhook Discord      |
 | POST    | `/api/auth/check-webhook`| Periksa validitas webhook Discord       |
 | GET     | `/api/stories`           | Ambil semua cerita                      |
@@ -257,16 +276,17 @@ Semua endpoint di bawah prefix `/api` dan butuh sesi login (kecuali `login`/`reg
 ## 🛡️ Keamanan
 
 - **Zero dependensi** — tidak ada risiko supply-chain dari package pihak ketiga
-- **Kata sandi** di-hash dengan **scrypt** + salt acak per akun; login memakai perbandingan waktu-konstan (anti timing-attack)
-- **Sesi** cookie `HttpOnly`, `SameSite=Lax`, ditandatangani HMAC dengan TTL 30 hari; berakhir saat ganti sandi/keluar
+- **Kata sandi** di-hash dengan **scrypt** (`N=131072, r=8, p=1`) + salt acak per akun; login memakai perbandingan waktu-konstan (anti timing-attack). Hash lama **otomatis di-upgrade** ke parameter baru saat login berikutnya
+- **Sesi** cookie `HttpOnly`, `SameSite=Lax`, ditandatangani HMAC dengan TTL 30 hari; berakhir saat ganti sandi/keluar; `Secure` hanya dipasang saat koneksi HTTPS
+- **Hapus akun** (endpoint `DELETE /api/auth/account`) menghapus data akun, file cerita, dan mencabut semua sesi — harus disertai sandi yang benar
 - **Anti-XSS**: CSP ketat (`script-src 'self'`, tanpa inline script/style) + semua konten user dirender via `textContent`
-- **Anti-SSRF**: permintaan ke Wattpad hanya boleh ke host `wattpad.com` yang disetujui; redirect divalidasi ulang per-hop
+- **Anti-SSRF**: permintaan ke Wattpad hanya boleh ke host `wattpad.com` yang disetujui; redirect divalidasi ulang per-hop. Webhook Discord divalidasi ketat: hanya `discord.com` / `discordapp.com`, protokol `https`, tanpa port/username/password, dan path wajib `/api/webhooks/…`
 - **Anti-CSRF**: cek header `Origin` & `Sec-Fetch-Site` pada semua operasi mutasi
-- **Rate limiting**: batas per-IP per endpoint (mis. login/register 5/menit, API umum 300/menit)
+- **Rate limiting**: batas per-IP per endpoint (mis. login/register 5/menit, API umum 300/menit). Pengecekan bab dibatasi maks. `UPDATE_CHECK_LIMIT` cerita per siklus dengan kunci per-akun agar tidak membebani server/Wattpad
 - **Validasi input**: tipe, panjang maksimal, whitelist enum, validasi skema URL
-- **Path traversal protection** pada static file server; body dibatasi 64 KB
-- **Security headers**: `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP/CORP, HSTS
-- **Penyimpanan atomik** (tmp + rename) agar data tidak korup; backup otomatis & auto-recovery
+- **Path traversal protection** pada static file server; body dibatasi 64 KB; `requestTimeout` 30 detik & `headersTimeout` 10 detik (anti slowloris)
+- **Security headers**: `X-Frame-Options`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP/CORP, HSTS (hanya saat HTTPS), `X-Robots-Tag: noindex, nofollow`
+- **Penyimpanan atomik** (tmp + rename) dengan antrian tulis agar data tidak korup/race; backup otomatis & auto-recovery
 
 ---
 

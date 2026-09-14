@@ -833,6 +833,24 @@ select option { background: var(--bg-soft); color: var(--text); }
   font-size: 0.7rem;
   color: var(--muted);
   font-weight: 600;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.progress-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.progress-update {
+  background: var(--accent-light, rgba(255, 80, 10, 0.12));
+  color: var(--accent, #ff500a);
+  border: 1px solid rgba(255, 80, 10, 0.4);
+  font-weight: 800;
+  font-size: 0.66rem;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  animation: pulse-dot 2.4s ease-in-out infinite;
 }
 .progress-bar {
   height: 4px;
@@ -1601,6 +1619,17 @@ max-height: calc(100vh - 32px);
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+}
+
+.prof-danger-zone {
+  border-top: 1px solid rgba(248,113,113,.25);
+  background: rgba(248,113,113,.045);
+}
+.prof-danger-zone .prof-section-title {
+  color: var(--red);
+}
+.prof-danger-zone .prof-section-title svg {
+  color: var(--red);
 }
 
 /* ── Profile Details / Guide ─────────────────────────── */

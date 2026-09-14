@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = 'v3.24';
+  const APP_VERSION = 'v3.27';
   try { document.getElementById('appVersion').textContent = `Versi ${APP_VERSION}`; } catch {}
 
   const $ = (sel, el = document) => el.querySelector(sel);
@@ -194,7 +194,11 @@
     btnTestWebhook: $('#btnTestWebhook'),
     discordStatusDot: $('#discordStatusDot'),
     discordStatusText: $('#discordStatusText'),
-    btnDiscordSave: $('#btnDiscordSave')
+    btnDiscordSave: $('#btnDiscordSave'),
+    deleteAccountForm: $('#deleteAccountForm'),
+    deletePwd: $('#deletePwd'),
+    deleteError: $('#deleteError'),
+    btnDeleteAccount: $('#btnDeleteAccount')
   };
 
   const nf = new Intl.NumberFormat('id-ID');
@@ -373,6 +377,7 @@
     }
 
     if (story.chaptersTotal > 0) {
+      const unread = story.chaptersTotal > story.chaptersRead ? story.chaptersTotal - story.chaptersRead : 0;
       const pct = Math.min(100, Math.round((story.chaptersRead / story.chaptersTotal) * 100));
       const pw = document.createElement('div');
       pw.className = 'progress-wrap';
@@ -380,9 +385,19 @@
       label.className = 'progress-label';
       const l1 = document.createElement('span');
       l1.textContent = `${nf.format(story.chaptersRead)} / ${nf.format(story.chaptersTotal)} bab`;
+      const right = document.createElement('span');
+      right.className = 'progress-right';
       const l2 = document.createElement('span');
       l2.textContent = `${pct}%`;
-      label.append(l1, l2);
+      right.appendChild(l2);
+      if (unread > 0) {
+        const up = document.createElement('span');
+        up.className = 'progress-update';
+        up.textContent = `Update ${unread} bab`;
+        up.title = unread === 1 ? '1 bab belum dibaca' : `${unread} bab belum dibaca`;
+        right.appendChild(up);
+      }
+      label.append(l1, right);
       const bar = document.createElement('div');
       bar.className = 'progress-bar';
       const fill = document.createElement('div');
@@ -489,10 +504,10 @@
         list = [...list].sort(byTitle);
         break;
       case 'rating':
-        list = [...list].sort((a, b) => b.rating - a.rating || b.createdAt - a.createdAt);
+        list = [...list].sort((a, b) => b.rating - a.rating || b.updatedAt - a.updatedAt);
         break;
       default:
-        list = [...list].sort((a, b) => b.createdAt - a.createdAt);
+        list = [...list].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
     }
     return list;
   }
@@ -711,14 +726,26 @@
   function detBuildProgress(story) {
     const wrap = document.createElement('div');
     wrap.className = 'pw-inner';
-    const pct = Math.min(100, Math.round((story.chaptersRead / story.chaptersTotal) * 100));
+    const read = story.chaptersRead;
+    const unread = story.chaptersTotal > read ? story.chaptersTotal - read : 0;
+    const pct = Math.min(100, Math.round((read / story.chaptersTotal) * 100));
     const label = document.createElement('div');
     label.className = 'progress-label';
     const l1 = document.createElement('span');
-    l1.textContent = `${nf.format(story.chaptersRead)} / ${nf.format(story.chaptersTotal)} bab`;
+    l1.textContent = `${nf.format(read)} / ${nf.format(story.chaptersTotal)} bab`;
+    const right = document.createElement('span');
+    right.className = 'progress-right';
     const l2 = document.createElement('span');
     l2.textContent = `${pct}%`;
-    label.append(l1, l2);
+    right.appendChild(l2);
+    if (unread > 0) {
+      const up = document.createElement('span');
+      up.className = 'progress-update';
+      up.textContent = `Update ${unread} bab`;
+      up.title = unread === 1 ? '1 bab belum dibaca' : `${unread} bab belum dibaca`;
+      right.appendChild(up);
+    }
+    label.append(l1, right);
     const bar = document.createElement('div');
     bar.className = 'progress-bar';
     const fill = document.createElement('div');
@@ -938,7 +965,7 @@
     if (typeof data?.interval === 'number') checkInterval = data.interval * 60;
     updateCountdown();
     if (!items.length) {
-      els.notifList.innerHTML = '<p class="notif-empty">Belum ada pembaruan. Cerita yang masuk list diperiksa otomatis setiap saat.</p>';
+      els.notifList.innerHTML = '<p class="notif-empty">Belum ada pembaruan. Semua cerita diperiksa otomatis berkala.</p>';
       return;
     }
     els.notifList.innerHTML = items.map((it) => `
@@ -996,6 +1023,12 @@
       renderNotifications(data);
       if (newUnread > prevUnread && newUnread > 0) {
         await load();
+      } else {
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const stale = items.some(
+          (it) => it.latest > 0 && it.storyId && state.stories.some((s) => s.id.toLowerCase() === String(it.storyId).toLowerCase() && Number(s.chaptersTotal) < Number(it.latest))
+        );
+        if (stale) await refreshStories();
       }
     } catch {}
   }
@@ -2051,6 +2084,11 @@ reader.celebrated = false;
     els.pwdCurrent.value = '';
     els.pwdNew.value = '';
     els.pwdConfirm.value = '';
+    els.deletePwd.value = '';
+    els.deleteError.hidden = true;
+    els.btnDeleteAccount.disabled = false;
+    els.btnDeleteAccount.textContent = 'Hapus Akun Permanen';
+    els.btnDeleteAccount.dataset.arm = '';
     const hasDiscord = !!(state.user.discordWebhook);
     els.discordEnabled.checked = hasDiscord;
     els.discordFields.hidden = !hasDiscord;
@@ -2421,6 +2459,46 @@ reader.celebrated = false;
       toast('success', 'Pengaturan Discord disimpan.');
     } catch (err) {
       toast('error', err.message);
+    }
+  });
+
+  els.deleteAccountForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = els.btnDeleteAccount;
+    const pwd = els.deletePwd.value;
+    if (!pwd) {
+      els.deleteError.textContent = 'Kata sandi wajib diisi untuk konfirmasi.';
+      els.deleteError.hidden = false;
+      return;
+    }
+    if (btn.dataset.arm !== '1') {
+      btn.dataset.arm = '1';
+      btn.textContent = 'Klik sekali lagi untuk menghapus';
+      setTimeout(() => {
+        btn.dataset.arm = '';
+        btn.textContent = 'Hapus Akun Permanen';
+      }, 2500);
+      return;
+    }
+    btn.disabled = true;
+    try {
+      await request('/api/auth/account', { method: 'DELETE', json: { password: pwd } });
+      state.stories = [];
+      state.lists = [];
+      state.user = null;
+      state.filterList = null;
+      closeModal(els.profileModal);
+      renderAll();
+      showAuthScreen();
+      setAuthMode('login');
+      toast('info', 'Akun dan semua data kamu telah dihapus.');
+    } catch (err) {
+      els.deleteError.textContent = err.message;
+      els.deleteError.hidden = false;
+    } finally {
+      btn.disabled = false;
+      btn.dataset.arm = '';
+      btn.textContent = 'Hapus Akun Permanen';
     }
   });
 

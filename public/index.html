@@ -637,6 +637,21 @@
           </div>
         </details>
       </div>
+      <div class="prof-section prof-danger-zone">
+        <h3 class="prof-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          Zona Berbahaya
+        </h3>
+        <p class="prof-section-desc">Hapus akun beserta semua cerita dan pengaturanmu secara permanen. Tidak dapat dibatalkan.</p>
+        <form id="deleteAccountForm" novalidate class="prof-form">
+          <label class="field">
+            <span>Kata sandi untuk konfirmasi</span>
+            <input type="password" id="deletePwd" maxlength="200" autocomplete="current-password" placeholder="Ketik kata sandi akunmu">
+          </label>
+          <p class="form-error" id="deleteError" role="alert" hidden></p>
+          <button type="submit" class="btn btn-danger btn-block" id="btnDeleteAccount">Hapus Akun Permanen</button>
+        </form>
+      </div>
       <div class="prof-close-wrap">
         <button class="btn btn-ghost prof-close-btn" type="button" data-close-modal>Tutup</button>
       </div>

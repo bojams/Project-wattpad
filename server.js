@@ -16,6 +16,7 @@ try {
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
+const TRUST_PROXY = String(process.env.TRUST_PROXY || '').trim() === '1';
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = path.join(ROOT, 'data');
@@ -59,20 +60,26 @@ const MIME = {
   '.woff2': 'font/woff2'
 };
 
-const SECURITY_HEADERS = {
-  'Content-Security-Policy':
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; " +
-    "font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; " +
-    "base-uri 'none'; form-action 'self'",
-  'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'no-referrer',
-  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Resource-Policy': 'same-origin',
-  'X-Permitted-Cross-Domain-Policies': 'none',
-  'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload'
-};
+function securityHeaders(req) {
+  const headers = {
+    'Content-Security-Policy':
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; " +
+      "font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; " +
+      "base-uri 'none'; form-action 'self'",
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+    'X-Permitted-Cross-Domain-Policies': 'none',
+    'X-Robots-Tag': 'noindex, nofollow'
+  };
+  if (req && isSecureRequest(req)) {
+    headers['Strict-Transport-Security'] = 'max-age=63072000; includeSubDomains; preload';
+  }
+  return headers;
+}
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -109,6 +116,7 @@ const HEARTBEAT_INTERVAL_MS = 60_000;
 const updatesByUser = new Map();
 let updatesSaveQueued = false;
 let nextCheckAtByUser = new Map();
+const nextCheckOffsetByUser = new Map();
 let updatesReadyPromise = null;
 
 async function loadUpdatesState() {
@@ -159,64 +167,91 @@ function updatesListOf(userId) {
     .sort((a, b) => Number(b.isNew) - Number(a.isNew) || String(b.lastCheck).localeCompare(String(a.lastCheck)));
 }
 
-async function checkUpdatesForUser(user) {
-  const acct = await loadAccount(user.id);
-  const tracked = (acct.stories || []).filter((s) => s.url && Array.isArray(s.listIds) && s.listIds.length > 0);
-  let map = updatesByUser.get(user.id);
-  if (!map) {
-    map = {};
-    updatesByUser.set(user.id, map);
-  }
-  const newUpdates = [];
-  let checked = 0;
-  for (const s of tracked) {
-    let sid = '';
-    try {
-      sid = assertWattpadStoryUrl(s.url);
-    } catch {
-      continue;
+const UPDATE_CHECK_LIMIT = Math.max(1, Number.parseInt(process.env.UPDATE_CHECK_LIMIT || String(MAX_STORIES), 10) || MAX_STORIES);
+const UPDATE_CHECK_DELAY_MS = Math.max(0, Number.parseInt(process.env.UPDATE_CHECK_DELAY_MS || '350', 10) || 350);
+const updatingUsers = new Set();
+
+function jitterDelayIndex(i) {
+  return UPDATE_CHECK_DELAY_MS * (0.7 + 0.6 * (i % 7) / 7);
+}
+
+async function checkUpdatesForUser(user, limit = UPDATE_CHECK_LIMIT) {
+  if (updatingUsers.has(user.id)) return { checked: 0, skipped: true };
+  updatingUsers.add(user.id);
+  try {
+    const acct = await loadAccount(user.id);
+    const tracked = (acct.stories || []).filter((s) => Boolean(s.url && s.url.trim()));
+    const total = tracked.length;
+    if (total === 0) return { checked: 0 };
+    let offset = nextCheckOffsetByUser.get(user.id) || 0;
+    if (offset >= total) offset = offset % total;
+    let map = updatesByUser.get(user.id);
+    if (!map) {
+      map = {};
+      updatesByUser.set(user.id, map);
     }
-    try {
-      const data = await fetchWattpadStory(sid);
-      const latest = Math.max(0, toInt(data.parts));
-      if (!latest) continue;
-      checked += 1;
-      const newRating = data.rating > 0 ? data.rating : s.rating;
-      const prev = map[s.id];
-      const known = Math.max(0, toInt(s.chaptersTotal));
-      if (!prev) {
-        const base = known || latest;
-        map[s.id] = { known: base, latest, isNew: latest > base, title: s.title, url: s.url, lastCheck: new Date().toISOString() };
-        if (latest > base) newUpdates.push({ title: s.title, old: base, latest, url: s.url });
-      } else {
-        if (latest > prev.latest) {
-          const oldVal = prev.latest;
-          prev.latest = latest;
-          prev.isNew = true;
-          prev.title = s.title;
-          prev.url = s.url;
-          newUpdates.push({ title: s.title, old: oldVal, latest, url: s.url });
-        } else if (latest < prev.latest) {
-          prev.latest = latest;
-        }
-        prev.lastCheck = new Date().toISOString();
+    const newUpdates = [];
+    let checked = 0;
+    let scanned = 0;
+    let waitIndex = 0;
+    for (let step = 0; step < total && checked < limit; step++) {
+      const s = tracked[(offset + step) % total];
+      scanned += 1;
+      let sid = '';
+      try {
+        sid = assertWattpadStoryUrl(s.url);
+      } catch {
+        continue;
       }
-      if (newRating !== s.rating || (s.votes !== data.votes && data.votes > 0) || (s.reads !== data.reads && data.reads > 0) || s.chaptersTotal !== latest) {
-        const target = (acct.stories || []).find((st) => st.id === s.id);
-        if (target) {
-          target.rating = newRating;
-          if (data.votes > 0) target.votes = data.votes;
-          if (data.reads > 0) target.reads = data.reads;
-          target.chaptersTotal = latest;
-          await saveAccount(user.id);
+      try {
+        const data = await fetchWattpadStory(sid);
+        const latest = Math.max(0, toInt(data.parts));
+        if (!latest) continue;
+        checked += 1;
+        const newRating = data.rating > 0 ? data.rating : s.rating;
+        const key = s.id.toLowerCase();
+        const prev = map[key];
+        const known = Math.max(0, toInt(s.chaptersTotal));
+        if (!prev) {
+          const base = known || latest;
+          map[key] = { known: base, latest, isNew: latest > base, title: s.title, url: s.url, lastCheck: new Date().toISOString() };
+          if (latest > base) newUpdates.push({ title: s.title, old: base, latest, url: s.url });
+        } else {
+          if (latest > prev.latest) {
+            const oldVal = prev.latest;
+            prev.latest = latest;
+            prev.isNew = true;
+            prev.title = s.title;
+            prev.url = s.url;
+            newUpdates.push({ title: s.title, old: oldVal, latest, url: s.url });
+          } else if (latest < prev.latest) {
+            prev.latest = latest;
+            if (typeof prev.known === 'number') prev.known = Math.min(prev.known, latest);
+            prev.isNew = false;
+          }
+          prev.lastCheck = new Date().toISOString();
         }
-      }
-      queueUpdatesSave();
-      await new Promise((r) => setTimeout(r, 350));
-    } catch {}
+        if (newRating !== s.rating || (s.votes !== data.votes && data.votes > 0) || (s.reads !== data.reads && data.reads > 0) || s.chaptersTotal !== latest) {
+          const target = (acct.stories || []).find((st) => st.id.toLowerCase() === key);
+          if (target) {
+            target.rating = newRating;
+            if (data.votes > 0) target.votes = data.votes;
+            if (data.reads > 0) target.reads = data.reads;
+            target.chaptersTotal = latest;
+            if (s.chaptersTotal !== latest) target.updatedAt = Date.now();
+            await saveAccount(user.id);
+          }
+        }
+        queueUpdatesSave();
+        await new Promise((r) => setTimeout(r, jitterDelayIndex(waitIndex++)));
+      } catch {}
+    }
+    nextCheckOffsetByUser.set(user.id, (offset + scanned) % total);
+    sendDiscordUpdates(user, newUpdates, checked);
+    return { checked };
+  } finally {
+    updatingUsers.delete(user.id);
   }
-  sendDiscordUpdates(user, newUpdates, checked);
-  return { checked };
 }
 
 async function sendDiscordUpdates(user, updates, checked) {
@@ -309,14 +344,14 @@ async function writeHeartbeat(extra) {
 
 async function runUpdateChecks() {
   const now = Date.now();
+  const tasks = [];
   for (const u of users.slice()) {
     const due = now >= (nextCheckAtByUser.get(u.id) || 0);
     if (!due) continue;
     nextCheckAtByUser.set(u.id, now + checkIntervalOf(u) * 60_000);
-    try {
-      await checkUpdatesForUser(u);
-    } catch {}
+    tasks.push(checkUpdatesForUser(u).catch(() => {}));
   }
+  await Promise.allSettled(tasks);
 }
 
 setInterval(() => {
@@ -379,7 +414,7 @@ function sanitizeListIds(value) {
   return out;
 }
 
-function normalizeStory(raw, { keepId = false, keepTimestamps = false } = {}) {
+function normalizeStory(raw, { keepId = false, keepTimestamps = false, strict = false } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new HttpError(400, 'Data cerita tidak valid.');
   }
@@ -388,6 +423,13 @@ function normalizeStory(raw, { keepId = false, keepTimestamps = false } = {}) {
   for (const key of ['url', 'cover']) {
     if (!isValidUrlString(raw[key] ?? '')) {
       throw new HttpError(400, `${key === 'url' ? 'Tautan cerita' : 'Cover'} harus dimulai dengan http:// atau https://`);
+    }
+  }
+  if (strict) {
+    const readRaw = toInt(raw.chaptersRead);
+    const totalRaw = toInt(raw.chaptersTotal);
+    if (totalRaw > 0 && readRaw > totalRaw) {
+      throw new HttpError(400, 'Bab dibaca tidak boleh lebih besar dari total bab.');
     }
   }
   const id = keepId && typeof raw.id === 'string' && ID_RE.test(raw.id)
@@ -493,6 +535,7 @@ async function loadUsers() {
             discordRoleId: typeof u.discordRoleId === 'string' ? u.discordRoleId : '',
             checkIntervalMin: Number.isInteger(u.checkIntervalMin) ? Math.max(5, Math.min(1440, u.checkIntervalMin)) : DEFAULT_CHECK_MINUTES,
             tokenVersion: Number.isInteger(u.tokenVersion) && u.tokenVersion >= 0 ? u.tokenVersion : 0,
+            hashVersion: Number.isInteger(u.hashVersion) && u.hashVersion >= 1 ? u.hashVersion : 1,
             createdAt: Number(u.createdAt) || Date.now()
           });
         }
@@ -505,14 +548,40 @@ async function loadUsers() {
   console.log(`[auth] ${users.length} akun terdaftar`);
 }
 
+let usersSaveChain = Promise.resolve();
 async function writeUsers() {
-  const payload = JSON.stringify(users, null, 2);
-  await fsp.writeFile(USERS_FILE + '.tmp', payload, 'utf8');
-  await fsp.rename(USERS_FILE + '.tmp', USERS_FILE);
+  const snapshot = JSON.stringify(users, null, 2);
+  usersSaveChain = usersSaveChain
+    .then(async () => {
+      await fsp.writeFile(USERS_FILE + '.tmp', snapshot, 'utf8');
+      await fsp.rename(USERS_FILE + '.tmp', USERS_FILE);
+    })
+    .catch((err) => console.error('[data] gagal menyimpan users:', err.message));
+  return usersSaveChain;
 }
 
-function hashPassword(password, salt) {
-  return crypto.scryptSync(password, salt, 64).toString('hex');
+const SCRYPT_N = 1 << 17;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_MAXMEM = 256 * 1024 * 1024;
+const PASSWORD_HASH_VERSION = 2;
+
+function hashPassword(password, salt, version = PASSWORD_HASH_VERSION) {
+  const opts = version >= 2
+    ? { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P, maxmem: SCRYPT_MAXMEM }
+    : undefined;
+  return crypto.scryptSync(password, salt, SCRYPT_KEYLEN, opts).toString('hex');
+}
+
+function verifyPasswordHash(password, userOrNull) {
+  const salt = userOrNull?.salt || '00000000000000000000000000000000';
+  const hash = userOrNull?.hash || '00'.repeat(64);
+  const version = userOrNull ? (userOrNull.hashVersion || 1) : PASSWORD_HASH_VERSION;
+  const attempt = Buffer.from(hashPassword(password, salt, version), 'hex');
+  const real = Buffer.from(hash, 'hex');
+  if (attempt.length !== real.length) return false;
+  return crypto.timingSafeEqual(attempt, real);
 }
 
 function isValidDiscordWebhook(url) {
@@ -520,7 +589,10 @@ function isValidDiscordWebhook(url) {
   try {
     const u = new URL(url);
     if (u.protocol !== 'https:') return false;
-    return u.hostname === 'discord.com' || u.hostname === 'discordapp.com';
+    if (u.port || u.username || u.password) return false;
+    if (u.hostname !== 'discord.com' && u.hostname !== 'discordapp.com') return false;
+    if (!/^\/api\/webhooks\/[\w-]+\/[\w-]+$/.test(u.pathname)) return false;
+    return true;
   } catch {
     return false;
   }
@@ -538,7 +610,7 @@ function validatePasswordStrength(pw) {
 async function createUserAccount(email, password) {
   const id = crypto.randomUUID();
   const salt = crypto.randomBytes(16).toString('hex');
-  const user = { id, email: email.toLowerCase(), salt, hash: hashPassword(password, salt), tokenVersion: 0, createdAt: Date.now() };
+  const user = { id, email: email.toLowerCase(), salt, hash: hashPassword(password, salt), hashVersion: PASSWORD_HASH_VERSION, tokenVersion: 0, createdAt: Date.now() };
   users.push(user);
   nextCheckAtByUser.set(id, 0);
   await writeUsers();
@@ -699,16 +771,23 @@ setInterval(() => {
 }, RATE_WINDOW_MS).unref();
 
 function isTrustedProxySocket(req) {
+  if (TRUST_PROXY) return true;
   const addr = req.socket.remoteAddress || '';
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1' || addr === 'localhost';
 }
 
 function clientIp(req) {
-  const trusted = isTrustedProxySocket(req);
-  const cf = req.headers['cf-connecting-ip'];
-  if (trusted && cf) {
-    const parts = String(cf).split(',')[0].trim();
-    if (/^[\d.a-fA-F:]+$/.test(parts)) return parts;
+  if (isTrustedProxySocket(req)) {
+    const cf = req.headers['cf-connecting-ip'];
+    if (cf) {
+      const parts = String(cf).split(',')[0].trim();
+      if (/^[\d.a-fA-F:]+$/.test(parts)) return parts;
+    }
+    const fwd = req.headers['x-forwarded-for'];
+    if (fwd) {
+      const parts = String(fwd).split(',')[0].trim();
+      if (/^[\d.a-fA-F:]+$/.test(parts)) return parts;
+    }
   }
   return req.socket.remoteAddress || '?';
 }
@@ -804,7 +883,7 @@ function send(res, status, body, contentType = 'application/json; charset=utf-8'
   const isJson = contentType.startsWith('application/json');
   const payload = body === null || isJson ? JSON.stringify(body ?? null) : body;
   res.writeHead(status, {
-    ...SECURITY_HEADERS,
+    ...securityHeaders(res.req),
     'Content-Type': contentType,
     'Cache-Control': 'no-store'
   });
@@ -850,7 +929,7 @@ async function serveStatic(req, res, pathname) {
       .replace(/style\.css\?v=[^"']+/g, `style.css?v=${cssSig}`)
       .replace(/app\.js\?v=[^"']+/g, `app.js?v=${jsSig}`);
     res.writeHead(200, {
-      ...SECURITY_HEADERS,
+      ...securityHeaders(req),
       'Content-Type': mime,
       'Cache-Control': 'no-store',
       'Content-Length': Buffer.byteLength(out)
@@ -860,7 +939,7 @@ async function serveStatic(req, res, pathname) {
   }
   const noCache = ext === '.js' || ext === '.css';
   res.writeHead(200, {
-    ...SECURITY_HEADERS,
+    ...securityHeaders(req),
     'Content-Type': mime,
     'Content-Length': stat.size,
     'Cache-Control': noCache ? 'no-cache' : 'public, max-age=86400',
@@ -885,7 +964,7 @@ async function assetSignature(file) {
 
 async function handleApi(req, res, pathname) {
   if (req.method === 'OPTIONS') {
-    res.writeHead(204, SECURITY_HEADERS);
+    res.writeHead(204, securityHeaders(req));
     res.end();
     return;
   }
@@ -1309,10 +1388,13 @@ async function routeApi(req, res, pathname) {
     const email = cleanStr(body.email, 120).toLowerCase();
     const password = typeof body.password === 'string' ? body.password : '';
     const user = users.find((u) => u.email === email);
-    const attempt = Buffer.from(hashPassword(password, user?.salt || '00000000000000000000000000000000'), 'hex');
-    const real = Buffer.from(user?.hash || '00'.repeat(64), 'hex');
-    const ok = user !== undefined && attempt.length === real.length && crypto.timingSafeEqual(attempt, real);
-    if (!ok) throw new HttpError(401, 'Email atau kata sandi salah.');
+    if (!user || !verifyPasswordHash(password, user)) throw new HttpError(401, 'Email atau kata sandi salah.');
+    if ((user.hashVersion || 1) < PASSWORD_HASH_VERSION) {
+      user.salt = crypto.randomBytes(16).toString('hex');
+      user.hash = hashPassword(password, user.salt);
+      user.hashVersion = PASSWORD_HASH_VERSION;
+      await writeUsers();
+    }
     setSessionCookie(req, res, issueToken(user.id, user.tokenVersion || 0));
     return send(res, 200, { user: publicUser(user) });
   }
@@ -1443,15 +1525,36 @@ async function routeApi(req, res, pathname) {
     if (!current) throw new HttpError(400, 'Kata sandi saat ini wajib diisi.');
     const pwErr = validatePasswordStrength(next);
     if (pwErr) throw new HttpError(400, pwErr);
-    const attempt = Buffer.from(hashPassword(current, user.salt), 'hex');
-    const real = Buffer.from(user.hash, 'hex');
-    if (attempt.length !== real.length || !crypto.timingSafeEqual(attempt, real)) {
+    if (!verifyPasswordHash(current, user)) {
       throw new HttpError(400, 'Kata sandi saat ini salah.');
     }
     user.salt = crypto.randomBytes(16).toString('hex');
     user.hash = hashPassword(next, user.salt);
+    user.hashVersion = PASSWORD_HASH_VERSION;
     user.tokenVersion = (user.tokenVersion || 0) + 1;
     await writeUsers();
+    return send(res, 200, { ok: true });
+  }
+
+  if (pathname === '/api/auth/account') {
+    const user = requireUser(req);
+    if (req.method !== 'DELETE') return send(res, 405, { error: 'Metode tidak diizinkan.' });
+    rateLimit(req, 5);
+    const body = await readJsonBody(req);
+    const password = typeof body.password === 'string' ? body.password : '';
+    if (!password) throw new HttpError(400, 'Kata sandi wajib diisi.');
+    if (!verifyPasswordHash(password, user)) {
+      throw new HttpError(400, 'Kata sandi salah.');
+    }
+    const idx = users.findIndex((u) => u.id === user.id);
+    if (idx !== -1) users.splice(idx, 1);
+    accountCache.delete(user.id);
+    updatesByUser.delete(user.id);
+    nextCheckAtByUser.delete(user.id);
+    await writeUsers();
+    queueUpdatesSave();
+    await fsp.rm(path.join(ACCOUNTS_DIR, `${user.id}.json`), { force: true }).catch(() => {});
+    clearSessionCookie(res);
     return send(res, 200, { ok: true });
   }
 
@@ -1511,7 +1614,7 @@ async function routeApi(req, res, pathname) {
     }
     if (req.method === 'POST') {
       const body = await readJsonBody(req);
-      const story = normalizeStory(body);
+      const story = normalizeStory(body, { strict: true });
       if (acct.stories.length >= MAX_STORIES) {
         throw new HttpError(409, `Maksimal ${MAX_STORIES} cerita.`);
       }
@@ -1535,7 +1638,7 @@ async function routeApi(req, res, pathname) {
     rateLimit(req, 12);
     const user = requireUser(req);
     await ensureUpdatesLoaded();
-    const { checked } = await checkUpdatesForUser(user);
+    const { checked } = await checkUpdatesForUser(user, 10_000);
     nextCheckAtByUser.set(user.id, Date.now() + checkIntervalOf(user) * 60_000);
     const items = updatesListOf(user.id);
     return send(res, 200, { checked, items, unread: items.filter((i) => i.isNew).length, nextCheckAt: nextCheckAtByUser.get(user.id) || null, interval: checkIntervalOf(user) });
@@ -1575,7 +1678,8 @@ async function routeApi(req, res, pathname) {
     }
     if (req.method === 'PUT') {
       const body = await readJsonBody(req);
-      const updated = normalizeStory({ ...acct.stories[index], ...body }, { keepId: true, keepTimestamps: true });
+      const updated = normalizeStory({ ...acct.stories[index], ...body }, { keepId: true, keepTimestamps: true, strict: true });
+      updated.updatedAt = Date.now();
       acct.stories[index] = updated;
       await saveAccount(user.id);
       return send(res, 200, { story: updated });
@@ -1625,6 +1729,9 @@ const server = http.createServer(async (req, res) => {
     res.destroy();
   }
 });
+
+server.requestTimeout = 30_000;
+server.headersTimeout = 10_000;
 
 process.on('unhandledRejection', (err) => console.error('[unhandled]', err));
 
