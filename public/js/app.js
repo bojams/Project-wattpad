@@ -5,6 +5,7 @@
   try { document.getElementById('appVersion').textContent = `Versi ${APP_VERSION}`; } catch {}
 
   const $ = (sel, el = document) => el.querySelector(sel);
+  const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
 
   const ICONS = {
     pencil:
@@ -87,6 +88,13 @@
     confirmTitle: $('#confirmTitle'),
     confirmText: $('#confirmText'),
     confirmOk: $('#confirmOk'),
+    duplicateModal: $('#duplicateModal'),
+    duplicateText: $('#duplicateText'),
+    duplicateMeta: $('#duplicateMeta'),
+    duplicateMetaTitle: $('#duplicateMetaTitle'),
+    duplicateMetaSub: $('#duplicateMetaSub'),
+    duplicateEdit: $('#duplicateEdit'),
+    duplicateOk: $('#duplicateOk'),
     toasts: $('#toasts'),
     btnFetch: $('#btnFetch'),
     btnFetchLabel: $('#btnFetchLabel'),
@@ -233,6 +241,7 @@
     if (!res.ok) {
       const err = new Error((data && data.error) || `HTTP ${res.status}`);
       err.status = res.status;
+      if (data && data.duplicate) err.duplicate = data.duplicate;
       if (res.status === 401 && !url.startsWith('/api/auth/')) {
         showAuthScreen();
       }
@@ -377,14 +386,15 @@
     }
 
     if (story.chaptersTotal > 0) {
-      const unread = story.chaptersTotal > story.chaptersRead ? story.chaptersTotal - story.chaptersRead : 0;
-      const pct = Math.min(100, Math.round((story.chaptersRead / story.chaptersTotal) * 100));
+      const read = Math.min(story.chaptersRead, story.chaptersTotal);
+      const unread = story.chaptersTotal - read;
+      const pct = Math.min(100, Math.round((read / story.chaptersTotal) * 100));
       const pw = document.createElement('div');
       pw.className = 'progress-wrap';
       const label = document.createElement('div');
       label.className = 'progress-label';
       const l1 = document.createElement('span');
-      l1.textContent = `${nf.format(story.chaptersRead)} / ${nf.format(story.chaptersTotal)} bab`;
+      l1.textContent = `${nf.format(read)} / ${nf.format(story.chaptersTotal)} bab`;
       const right = document.createElement('span');
       right.className = 'progress-right';
       const l2 = document.createElement('span');
@@ -726,8 +736,8 @@
   function detBuildProgress(story) {
     const wrap = document.createElement('div');
     wrap.className = 'pw-inner';
-    const read = story.chaptersRead;
-    const unread = story.chaptersTotal > read ? story.chaptersTotal - read : 0;
+    const read = Math.min(story.chaptersRead, story.chaptersTotal);
+    const unread = story.chaptersTotal - read;
     const pct = Math.min(100, Math.round((read / story.chaptersTotal) * 100));
     const label = document.createElement('div');
     label.className = 'progress-label';
@@ -1033,18 +1043,19 @@
     } catch {}
   }
 
-  let modalFocusTrap = null;
+  const modalTraps = new WeakMap();
+  const modalFocusStack = [];
 
   function openModal(backdrop) {
-    lastFocus = document.activeElement;
+    modalFocusStack.push(document.activeElement);
     backdrop.hidden = false;
     document.body.classList.add('no-scroll');
     const target =
       backdrop.querySelector('input:not([type="hidden"]), textarea, select') ||
       backdrop.querySelector('button');
     if (target) target.focus({ preventScroll: true });
-    modalFocusTrap = (e) => {
-      if (e.key !== 'Tab') return;
+    const trap = (e) => {
+      if (e.key !== 'Tab' || backdrop.hidden) return;
       const focusable = backdrop.querySelectorAll('input:not([type="hidden"]), textarea, select, button:not([hidden]), [tabindex]:not([tabindex="-1"])');
       if (!focusable.length) return;
       const first = focusable[0];
@@ -1052,15 +1063,21 @@
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
-    backdrop.addEventListener('keydown', modalFocusTrap);
+    modalTraps.set(backdrop, trap);
+    backdrop.addEventListener('keydown', trap);
   }
 
   function closeModal(backdrop) {
     backdrop.hidden = true;
-    if (modalFocusTrap) { backdrop.removeEventListener('keydown', modalFocusTrap); modalFocusTrap = null; }
+    const trap = modalTraps.get(backdrop);
+    if (trap) {
+      backdrop.removeEventListener('keydown', trap);
+      modalTraps.delete(backdrop);
+    }
     if (!$('.modal-backdrop:not([hidden])')) document.body.classList.remove('no-scroll');
-    if (lastFocus && document.contains(lastFocus)) {
-      try { lastFocus.focus({ preventScroll: true }); } catch {}
+    const prev = modalFocusStack.pop();
+    if (prev && document.contains(prev)) {
+      try { prev.focus({ preventScroll: true }); } catch {}
     }
   }
 
@@ -1355,6 +1372,7 @@
       els.modalTitle.textContent = 'Tambah Cerita';
       els.storyForm.elements.id.value = '';
     }
+    enforceChapterLimit();
     updateFetchBtn();
     openModal(els.storyModal);
     els.storyForm.elements.title.focus({ preventScroll: true });
@@ -1363,6 +1381,19 @@
   function showFormError(msg) {
     els.formError.textContent = msg;
     els.formError.hidden = false;
+  }
+
+  function enforceChapterLimit() {
+    const readEl = els.storyForm.elements.chaptersRead;
+    const totalEl = els.storyForm.elements.chaptersTotal;
+    const total = Number(totalEl.value);
+    if (Number.isFinite(total) && total > 0) {
+      readEl.max = String(Math.min(99999, Math.trunc(total)));
+      const read = Number(readEl.value);
+      if (Number.isFinite(read) && read > total) readEl.value = String(Math.trunc(total));
+    } else {
+      readEl.max = '99999';
+    }
   }
 
   function validatePayload(p) {
@@ -1376,6 +1407,39 @@
       return 'Bab dibaca tidak boleh lebih besar dari total bab.';
     }
     return null;
+  }
+
+  const TITLE_INVISIBLE_RE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/g;
+
+  function titleKey(value) {
+    return String(value ?? '')
+      .normalize('NFC')
+      .replace(TITLE_INVISIBLE_RE, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function findDuplicateStory(title, exceptId = '') {
+    const key = titleKey(title);
+    if (!key) return null;
+    return state.stories.find((s) => s.id !== exceptId && titleKey(s.title) === key) || null;
+  }
+
+  let duplicateStoryId = null;
+
+  function openDuplicateModal(story) {
+    if (!story) return;
+    duplicateStoryId = story.id || null;
+    els.duplicateText.textContent =
+      'Sudah ada cerita dengan judul yang sama di rakmu, jadi tidak perlu ditambahkan lagi.';
+    const sub = [story.author, story.status].filter(Boolean).join(' • ');
+    els.duplicateMetaTitle.textContent = story.title || '(tanpa judul)';
+    els.duplicateMetaSub.textContent = sub;
+    els.duplicateMeta.hidden = !sub;
+    els.duplicateEdit.hidden = !duplicateStoryId;
+    openModal(els.duplicateModal);
+    els.duplicateOk.focus({ preventScroll: true });
   }
 
   async function submitStory(event) {
@@ -1404,6 +1468,11 @@
       return;
     }
     const id = f.elements.id.value;
+    const duplicate = findDuplicateStory(payload.title, id);
+    if (duplicate) {
+      openDuplicateModal(duplicate);
+      return;
+    }
     els.formError.hidden = true;
     els.btnSave.disabled = true;
     try {
@@ -1414,6 +1483,10 @@
       mergeStory(data.story);
       toast('success', id ? 'Perubahan berhasil disimpan.' : `"${data.story.title}" ditambahkan.`);
     } catch (err) {
+      if (err.duplicate) {
+        openDuplicateModal(err.duplicate);
+        return;
+      }
       showFormError(err.message);
     } finally {
       els.btnSave.disabled = false;
@@ -1535,18 +1608,11 @@
     if (!story || !chapterNum) return;
     const live = state.stories.find((s) => s.id === story.id) || story;
     const prevRead = Number(live.chaptersRead) || 0;
-    const next = Math.max(prevRead, chapterNum);
-    let changed = false;
-    if (next !== prevRead) {
-      live.chaptersRead = next;
-      changed = true;
-    }
-    const prevTotal = Number(live.chaptersTotal) || 0;
-    if (prevTotal > 0 && next > prevTotal) {
-      live.chaptersTotal = next;
-      changed = true;
-    }
-    if (!changed) return;
+    const total = Number(live.chaptersTotal) || 0;
+    let next = Math.max(prevRead, chapterNum);
+    if (total > 0) next = Math.min(next, total);
+    if (next === prevRead) return;
+    live.chaptersRead = next;
     renderAll();
     try {
       await request(`/api/stories/${encodeURIComponent(live.id)}`, {
@@ -1726,6 +1792,7 @@ reader.celebrated = false;
     if (data.parts > 0 && (force || !f.chaptersTotal.value.trim())) {
       f.chaptersTotal.value = String(data.parts);
     }
+    enforceChapterLimit();
     fill(f.notes, data.description ? data.description.slice(0, 2000) : '');
     if (data.rating > 0 && (force || Number(els.ratingValue.value) === 0)) {
       setStarInput(data.rating);
@@ -1805,12 +1872,31 @@ reader.celebrated = false;
     confirmDelete();
   });
 
+  els.duplicateEdit.addEventListener('click', () => {
+    const existing = state.stories.find((s) => s.id === duplicateStoryId);
+    duplicateStoryId = null;
+    closeModal(els.duplicateModal);
+    if (!existing) return;
+    if (els.storyModal.hidden) openStoryModal(existing);
+    else {
+      closeModal(els.storyModal);
+      openStoryModal(existing);
+    }
+  });
+
+  els.duplicateOk.addEventListener('click', () => {
+    duplicateStoryId = null;
+  });
+
   els.storyForm.addEventListener('submit', submitStory);
 
   els.storyForm.elements.url.addEventListener('input', () => {
     updateFetchBtn();
     debouncedAutoFetch();
   });
+
+  els.storyForm.elements.chaptersTotal.addEventListener('input', enforceChapterLimit);
+  els.storyForm.elements.chaptersRead.addEventListener('input', enforceChapterLimit);
 
   els.btnFetch.addEventListener('click', () => fetchFromWattpad(true));
 
@@ -1845,7 +1931,7 @@ reader.celebrated = false;
     setStarInput(Number(els.ratingValue.value) === v ? 0 : v);
   });
 
-  for (const backdrop of [els.storyModal, els.confirmModal, els.listsModal, els.profileModal]) {
+  for (const backdrop of [els.storyModal, els.confirmModal, els.duplicateModal, els.listsModal, els.profileModal]) {
     backdrop.addEventListener('click', (e) => {
       if (e.target === backdrop) closeModal(backdrop);
     });
@@ -1878,8 +1964,8 @@ reader.celebrated = false;
     if (e.key === 'Escape') {
       if (!els.readerOverlay.hidden) { closeReader(); return; }
       if (!els.detailOverlay.hidden) { closeDetail(); return; }
-      const open = $('.modal-backdrop:not([hidden])');
-      if (open) { closeModal(open); return; }
+      const open = $$('.modal-backdrop:not([hidden])');
+      if (open.length) { closeModal(open[open.length - 1]); return; }
     } else if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const t = document.activeElement;
       if (t && ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) return;

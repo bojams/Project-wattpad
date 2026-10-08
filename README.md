@@ -214,11 +214,63 @@ Buka **menu profil** untuk:
 
 ---
 
+## 🚨 Notifikasi Status Server (Server Mati)
+
+`server.js` tidak bisa melaporkan dirinya sendiri saat prosesnya mati (crash, OOM, `kill -9`, atau host mati). Karena itu ada **`monitor.js`** — proses terpisah yang selalu hidup dan memeriksa `/api/health` setiap 15 detik.
+
+Kalau server tidak merespons, webhook Discord menerima:
+
+> **🔴 Server Nonaktif**
+> Server Hideo Wattpad sedang mati / berhenti.
+> **Silahkan Chat Ke Hideosyifa**
+
+Serta ping ke role owners. Begitu server pulih, dikirim **🟢 Server Aktif** lengkap dengan lama downtime-nya.
+
+### Cara kerja
+
+| Kondisi                                   | Yang dikirim                                              |
+| ----------------------------------------- | --------------------------------------------------------- |
+| Gagal cek 3× berturut-turut (≈45 detik)   | 🔴 Server Nonaktif (lalu diulang tiap 30 menit)            |
+| Restart ≥3× dalam 15 menit (crash loop)   | 🔴 Server Nonaktif (mention "crash loop")                  |
+| Server kembali merespons & stabil 5 menit | 🟢 Server Aktif + lama downtime                           |
+
+Kalau `monitor.js` sedang aktif, `server.js` otomatis melewati notifikasi status (agar tidak dobel). `server.js` tetap menangani `SIGINT`/`SIGTERM`/`uncaughtException` sebagai cadangan bila monitor tidak terpasang.
+
+### Menjalankan
+
+```bash
+node monitor.js          # jalan terus (dipakai systemd)
+node monitor.js --once   # satu kali cek, untuk tes manual
+```
+
+Sudah terdaftar sebagai service `hideo-wattpad-monitor.service` (aktif saat boot):
+
+```bash
+systemctl status hideo-wattpad-monitor
+sudo systemctl restart hideo-wattpad-monitor
+tail -f /home/bojam/project/Project-wattpad/monitor-journal.log
+```
+
+### Konfigurasi `.env` (opsional)
+
+| Variabel                    | Default        | Keterangan                                    |
+| --------------------------- | -------------- | --------------------------------------------- |
+| `DISCORD_WEBHOOK_URL`        | —              | Webhook cadangan kalau webhook akun kosong    |
+| `OWNER_CONTACT_NAME`        | `Hideosyifa`   | Nama yang tampil di pesan                    |
+| `OWNER_CONTACT_ID`          | —              | User ID Discord (17–20 digit) → jadi mention |
+| `MONITOR_INTERVAL_SEC`      | `15`           | Jarak antar cek                               |
+| `MONITOR_FAIL_THRESHOLD`    | `3`            | Berapa gagal berturut-turut sebelum alert     |
+| `MONITOR_CRASH_THRESHOLD`   | `3`            | Berapa restart dalam 15 menit = crash loop    |
+| `MONITOR_REPEAT_MIN`        | `30`           | Jarak pengingat selama server masih mati     |
+
+---
+
 ## 🗂️ Struktur Proyek
 
 ```
 Project-wattpad/
 ├── server.js            # Backend API + static file server (Node murni)
+├── monitor.js           # Monitor status eksternal (kirim webhook saat server mati)
 ├── package.json
 ├── README.md
 ├── .env                 # Konfigurasi (tidak ikut di-commit)
@@ -233,6 +285,8 @@ Project-wattpad/
     ├── session-secret   # Kunci penandatanganan sesi (dibuat otomatis)
     ├── updates.json     # Status pembaruan / terakhir dicek
     ├── heartbeat.json   # Status server (untuk notifikasi pemilik)
+    ├── monitor-state.json # State monitor (cek terakhir, status alert)
+    ├── monitor.log      # Log monitor (dibatasi 512 KB)
     ├── stories.json     # Data lama (cadangan dari versi sebelumnya)
     └── backups/         # Backup otomatis (maks. 15 file, dirotasi)
 ```
@@ -243,10 +297,11 @@ Project-wattpad/
 
 ## 🔌 Referensi API
 
-Semua endpoint di bawah prefix `/api` dan butuh sesi login (kecuali `login`/`register`).
+Semua endpoint di bawah prefix `/api` dan butuh sesi login (kecuali `health`/`login`/`register`).
 
 | Metode  | Endpoint                 | Keterangan                              |
 | ------- | ------------------------ | --------------------------------------- |
+| GET     | `/api/health`            | Cek kesehatan server (tanpa login)     |
 | POST    | `/api/auth/register`     | Daftar akun baru                        |
 | POST    | `/api/auth/login`        | Masuk (set cookie sesi)                 |
 | POST    | `/api/auth/logout`       | Keluar (mencabut semua sesi)            |

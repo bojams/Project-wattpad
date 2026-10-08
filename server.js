@@ -82,9 +82,10 @@ function securityHeaders(req) {
 }
 
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, data) {
     super(message);
     this.status = status;
+    if (data) this.data = data;
   }
 }
 
@@ -111,8 +112,26 @@ function checkIntervalOf(user) {
 const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK_URL || '';
 const SITE_URL = 'https://wattpad.hideo.id';
 const OWNER_NOTIFY_EMAIL = 'adinata79177@gmail.com';
+const OWNER_CONTACT_NAME = cleanStr(process.env.OWNER_CONTACT_NAME || 'Hideosyifa', 40);
+const OWNER_CONTACT_ID = /^<?@?!?\d{15,25}>?$/.test(String(process.env.OWNER_CONTACT_ID || '').trim())
+  ? String(process.env.OWNER_CONTACT_ID).trim().replace(/^<@!?>|>$/g, '')
+  : '';
+const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK_URL || '';
+const ALERT_ROLE_ID = /^<?@?!?\d{15,25}>?$/.test(String(process.env.ALERT_ROLE_ID || '').trim())
+  ? String(process.env.ALERT_ROLE_ID).trim().replace(/^<@!?>|>$/g, '')
+  : '';
+// Alert gangguan (server down / upstream Wattpad) dimatikan secara default.
+// Notifikasi hanya dikirim saat ada update cerita. Set STATUS_ALERTS_ENABLED=1 untuk mengaktifkan lagi.
+const STATUS_ALERTS_ENABLED = String(process.env.STATUS_ALERTS_ENABLED || '').trim() === '1';
+const WATTPAD_ALERT_FAIL_THRESHOLD = Math.max(1, Number(process.env.WATTPAD_ALERT_FAIL_THRESHOLD || 5) || 5);
+const WATTPAD_ALERT_COOLDOWN_MS = Math.max(1, Number(process.env.WATTPAD_ALERT_COOLDOWN_MIN || 15) || 15) * 60_000;
 const HEARTBEAT_FILE = path.join(DATA_DIR, 'heartbeat.json');
 const HEARTBEAT_INTERVAL_MS = 60_000;
+const STATUS_UP_COOLDOWN_MS = 15 * 60_000;
+const STATUS_DOWN_COOLDOWN_MS = 5 * 60_000;
+const MONITOR_STATE_FILE = path.join(DATA_DIR, 'monitor-state.json');
+const MONITOR_STALE_MS = 3 * 60_000;
+const STARTED_AT = Date.now();
 const updatesByUser = new Map();
 let updatesSaveQueued = false;
 let nextCheckAtByUser = new Map();
@@ -238,6 +257,7 @@ async function checkUpdatesForUser(user, limit = UPDATE_CHECK_LIMIT) {
             if (data.votes > 0) target.votes = data.votes;
             if (data.reads > 0) target.reads = data.reads;
             target.chaptersTotal = latest;
+            if (toInt(target.chaptersRead) > latest) target.chaptersRead = latest;
             if (s.chaptersTotal !== latest) target.updatedAt = Date.now();
             await saveAccount(user.id);
           }
@@ -256,11 +276,17 @@ async function checkUpdatesForUser(user, limit = UPDATE_CHECK_LIMIT) {
 
 async function sendDiscordUpdates(user, updates, checked) {
   if (!updates.length) return;
-  const webhookUrl = user.discordWebhook || DISCORD_WEBHOOK;
-  if (!webhookUrl) return;
-  if (user.discordWebhook && !isValidDiscordWebhook(user.discordWebhook)) return;
-  const roleId = user.discordRoleId || '';
-  const ping = roleId ? '<@&' + roleId + '>' : '';
+  const targets = [];
+  const seen = new Set();
+  const add = (url, roleId) => {
+    if (!url || !isValidDiscordWebhook(url) || seen.has(url)) return;
+    seen.add(url);
+    targets.push({ url, roleId: roleId || '' });
+  };
+  add(user.discordWebhook, user.discordRoleId);
+  add(ALERT_WEBHOOK, ALERT_ROLE_ID);
+  if (!targets.length) add(DISCORD_WEBHOOK, '');
+  if (!targets.length) return;
   const lines = updates.map((u) => {
     const name = u.title || 'Cerita';
     const progress = u.old + ' → ' + u.latest + ' bab';
@@ -278,6 +304,11 @@ async function sendDiscordUpdates(user, updates, checked) {
     footer: { text: 'Hideo Wattpad — ' + (user.email || '') },
     timestamp: new Date().toISOString()
   };
+  await Promise.allSettled(targets.map(({ url, roleId }) => sendUpdateEmbed(url, roleId, embed)));
+}
+
+async function sendUpdateEmbed(webhookUrl, roleId, embed) {
+  const ping = roleId ? '<@&' + roleId + '>' : '';
   try {
     await fetch(webhookUrl, {
       method: 'POST',
@@ -287,59 +318,227 @@ async function sendDiscordUpdates(user, updates, checked) {
   } catch {}
 }
 
-function ownerNotifyWebhook() {
+function alertTarget() {
+  if (ALERT_WEBHOOK && isValidDiscordWebhook(ALERT_WEBHOOK)) {
+    return { webhook: ALERT_WEBHOOK, roleId: ALERT_ROLE_ID };
+  }
   const owner = users.find((u) => u.email === OWNER_NOTIFY_EMAIL);
   const own = owner && owner.discordWebhook ? owner.discordWebhook : '';
-  if (own && isValidDiscordWebhook(own)) return own;
-  if (DISCORD_WEBHOOK && isValidDiscordWebhook(DISCORD_WEBHOOK)) return DISCORD_WEBHOOK;
-  return '';
+  if (own && isValidDiscordWebhook(own)) return { webhook: own, roleId: (owner && owner.discordRoleId) || '' };
+  if (DISCORD_WEBHOOK && isValidDiscordWebhook(DISCORD_WEBHOOK)) return { webhook: DISCORD_WEBHOOK, roleId: '' };
+  return { webhook: '', roleId: '' };
 }
 
-async function sendOwnerStatusMessage(kind) {
-  const webhookUrl = ownerNotifyWebhook();
+function ownerNotifyWebhook() {
+  return alertTarget().webhook;
+}
+
+function statusDurationText(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return totalSec + ' detik';
+  const min = Math.floor(totalSec / 60);
+  if (min < 60) return min + ' menit';
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return hour + ' jam' + (min % 60 ? ' ' + (min % 60) + ' menit' : '');
+  return Math.floor(hour / 24) + ' hari' + (hour % 24 ? ' ' + (hour % 24) + ' jam' : '');
+}
+
+function statusContactLine() {
+  const name = OWNER_CONTACT_NAME || 'Hideosyifa';
+  return OWNER_CONTACT_ID ? 'Silahkan Chat Ke <@' + OWNER_CONTACT_ID + '> (' + name + ')' : 'Silahkan Chat Ke ' + name;
+}
+
+function statusSiteLink() {
+  return '[🌐 Buka Hideo Wattpad](' + SITE_URL + ')';
+}
+
+async function sendOwnerStatusMessage(kind, detail) {
+  if (!STATUS_ALERTS_ENABLED) return;
+  const { webhook: webhookUrl, roleId } = alertTarget();
   if (!webhookUrl) return;
-  const embed =
-    kind === 'down'
-      ? {
-          title: '🔴 Server Nonaktif',
-          url: SITE_URL,
-          description: 'Server Hideo Wattpad sedang mati / berhenti.',
-          color: 15548997,
-          footer: { text: 'Hideo Wattpad — Status Server' },
-          timestamp: new Date().toISOString()
-        }
-      : {
-          title: '🟢 Server Aktif',
-          url: SITE_URL,
-          description: 'Server Hideo Wattpad aktif dan berjalan normal.',
-          color: 3066993,
-          footer: { text: 'Hideo Wattpad — Status Server' },
-          timestamp: new Date().toISOString()
-        };
+  const down = kind === 'down';
+  const downtime = down ? statusDurationText(detail && detail.downtimeMs) : '';
+  const embed = down
+    ? {
+        title: '🔴 Server Nonaktif',
+        description:
+          'Server Hideo Wattpad sedang mati / berhenti.\n' +
+          '**' + statusContactLine() + '**',
+        color: 15548997,
+        fields: [
+          { name: 'Status', value: 'Mati / tidak bisa diakses', inline: true },
+          { name: 'Downtime', value: downtime || 'baru saja mati', inline: true },
+          { name: 'Situs', value: statusSiteLink(), inline: true }
+        ],
+        footer: { text: 'Hideo Wattpad — Status Server' },
+        timestamp: new Date().toISOString()
+      }
+    : {
+        title: '🟢 Server Aktif',
+        description:
+          'Server Hideo Wattpad aktif dan berjalan normal.' +
+          (downtime ? '\nDowntime sebelumnya: ' + downtime + '.' : ''),
+        color: 3066993,
+        fields: [{ name: 'Situs', value: statusSiteLink(), inline: true }],
+        footer: { text: 'Hideo Wattpad — Status Server' },
+        timestamp: new Date().toISOString()
+      };
+  const ping = down && roleId ? '<@&' + roleId + '>' : '';
   try {
-    await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'Hideo Wattpad', avatar_url: SITE_URL + '/favicon.svg', embeds: [embed] })
-    });
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          username: 'Hideo Wattpad',
+          avatar_url: SITE_URL + '/favicon.svg',
+          content: ping || undefined,
+          embeds: [embed]
+        })
+      });
+    } finally {
+      clearTimeout(to);
+    }
   } catch {}
+}
+
+// ==== Pemantauan gangguan upstream Wattpad ====
+const wattpadHealth = {
+  failStreak: 0,
+  alertActive: false,
+  alertStartedAt: 0,
+  lastNotifiedAt: 0,
+  lastOkAt: Date.now(),
+  lastError: ''
+};
+
+async function sendWattpadStatusMessage(kind, downtimeMs, reminder) {
+  if (!STATUS_ALERTS_ENABLED) return;
+  const { webhook, roleId } = alertTarget();
+  if (!webhook) return;
+  const down = kind === 'down';
+  const downtime = down ? '' : statusDurationText(downtimeMs);
+  const embed = down
+    ? {
+        title: '⚠️ Gangguan Server Wattpad',
+        description:
+          'Hideo Wattpad kesulitan mengambil data dari server Wattpad.\n' +
+          (reminder ? 'Masih terjadi sampai sekarang.\n' : '') +
+          '**' + statusContactLine() + '**',
+        color: 16744448,
+        fields: [
+          { name: 'Sumber', value: 'Wattpad (upstream)', inline: true },
+          { name: 'Status', value: 'Gagal / tidak merespons', inline: true },
+          { name: 'Gagal berturut-turut', value: String(wattpadHealth.failStreak), inline: true },
+          { name: 'Error terakhir', value: (wattpadHealth.lastError || 'tidak diketahui').slice(0, 200), inline: false },
+          { name: 'Situs', value: statusSiteLink(), inline: true }
+        ],
+        footer: { text: 'Hideo Wattpad — Status Upstream' },
+        timestamp: new Date().toISOString()
+      }
+    : {
+        title: '✅ Server Wattpad Normal Kembali',
+        description:
+          'Koneksi ke Wattpad sudah pulih.' + (downtime ? '\nGangguan berlangsung: ' + downtime + '.' : ''),
+        color: 3066993,
+        fields: [{ name: 'Situs', value: statusSiteLink(), inline: true }],
+        footer: { text: 'Hideo Wattpad — Status Upstream' },
+        timestamp: new Date().toISOString()
+      };
+  const content = down && roleId ? '<@&' + roleId + '>' : '';
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      await fetch(webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          username: 'Hideo Wattpad',
+          avatar_url: SITE_URL + '/favicon.svg',
+          content: content || undefined,
+          embeds: [embed]
+        })
+      });
+    } finally {
+      clearTimeout(to);
+    }
+  } catch {}
+  console.log(`[wattpad-alert] ${kind}${reminder ? ' (reminder)' : ''} — ${wattpadHealth.lastError || ''}`);
+}
+
+function noteWattpadSuccess() {
+  const hadAlert = wattpadHealth.alertActive;
+  if (wattpadHealth.failStreak || hadAlert) {
+    const downtimeMs = hadAlert && wattpadHealth.alertStartedAt ? Date.now() - wattpadHealth.alertStartedAt : 0;
+    wattpadHealth.failStreak = 0;
+    wattpadHealth.lastOkAt = Date.now();
+    wattpadHealth.alertActive = false;
+    wattpadHealth.alertStartedAt = 0;
+    if (hadAlert) sendWattpadStatusMessage('up', downtimeMs).catch(() => {});
+  }
+}
+
+function noteWattpadFailure(err) {
+  const status = err && err.status;
+  // 400/404/410 bukan gangguan server Wattpad (tautan salah / cerita dihapus).
+  if (status === 400 || status === 404 || status === 410) return;
+  wattpadHealth.failStreak += 1;
+  wattpadHealth.lastError = (err && err.message) ? err.message : String(err || 'tidak diketahui');
+  const now = Date.now();
+  if (wattpadHealth.alertActive) {
+    if (now - wattpadHealth.lastNotifiedAt > WATTPAD_ALERT_COOLDOWN_MS) {
+      wattpadHealth.lastNotifiedAt = now;
+      sendWattpadStatusMessage('down', 0, true).catch(() => {});
+    }
+    return;
+  }
+  if (wattpadHealth.failStreak >= WATTPAD_ALERT_FAIL_THRESHOLD && now - wattpadHealth.lastNotifiedAt > WATTPAD_ALERT_COOLDOWN_MS) {
+    wattpadHealth.alertActive = true;
+    wattpadHealth.alertStartedAt = now;
+    wattpadHealth.lastNotifiedAt = now;
+    sendWattpadStatusMessage('down', 0, false).catch(() => {});
+  }
 }
 
 async function readHeartbeat() {
   try {
     const raw = JSON.parse(await fsp.readFile(HEARTBEAT_FILE, 'utf8'));
-    if (raw && Number.isFinite(raw.lastSeen)) return { lastSeen: raw.lastSeen, cleaned: raw.cleaned === true };
+    if (raw && Number.isFinite(raw.lastSeen)) {
+      return {
+        lastSeen: raw.lastSeen,
+        cleaned: raw.cleaned === true,
+        reason: typeof raw.reason === 'string' ? raw.reason : '',
+        downNotifiedAt: Number.isFinite(raw.downNotifiedAt) ? raw.downNotifiedAt : 0,
+        upNotifiedAt: Number.isFinite(raw.upNotifiedAt) ? raw.upNotifiedAt : 0
+      };
+    }
   } catch {}
   return null;
 }
 
+let heartbeatExtras = {};
 async function writeHeartbeat(extra) {
-  const payload = JSON.stringify(Object.assign({ lastSeen: Date.now() }, extra || {}));
+  if (extra) heartbeatExtras = Object.assign({}, heartbeatExtras, extra);
+  const payload = JSON.stringify(Object.assign({ lastSeen: Date.now() }, heartbeatExtras));
   const tmp = `${HEARTBEAT_FILE}.tmp`;
   try {
     await fsp.writeFile(tmp, payload, 'utf8');
     await fsp.rename(tmp, HEARTBEAT_FILE);
   } catch {}
+}
+
+function readMonitorState() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(MONITOR_STATE_FILE, 'utf8'));
+    if (raw && typeof raw === 'object') return raw;
+  } catch {}
+  return null;
 }
 
 async function runUpdateChecks() {
@@ -414,11 +613,25 @@ function sanitizeListIds(value) {
   return out;
 }
 
+const TITLE_INVISIBLE_RE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/g;
+
+function cleanTitle(value) {
+  return cleanStr(value, 200)
+    .normalize('NFC')
+    .replace(TITLE_INVISIBLE_RE, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function titleKey(value) {
+  return cleanTitle(value).toLowerCase();
+}
+
 function normalizeStory(raw, { keepId = false, keepTimestamps = false, strict = false } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new HttpError(400, 'Data cerita tidak valid.');
   }
-  const title = cleanStr(raw.title, 200);
+  const title = cleanTitle(raw.title);
   if (!title) throw new HttpError(400, 'Judul cerita wajib diisi.');
   for (const key of ['url', 'cover']) {
     if (!isValidUrlString(raw[key] ?? '')) {
@@ -438,6 +651,8 @@ function normalizeStory(raw, { keepId = false, keepTimestamps = false, strict = 
   const createdAtRaw = Number(raw.createdAt);
   const updatedAtRaw = Number(raw.updatedAt);
   const now = Date.now();
+  const chaptersTotalOut = toInt(raw.chaptersTotal);
+  const chaptersReadOut = toInt(raw.chaptersRead);
   return {
     id,
     title,
@@ -447,8 +662,8 @@ function normalizeStory(raw, { keepId = false, keepTimestamps = false, strict = 
     rating: Math.min(5, toInt(raw.rating)),
     votes: toInt(raw.votes),
     reads: toInt(raw.reads),
-    chaptersRead: toInt(raw.chaptersRead),
-    chaptersTotal: toInt(raw.chaptersTotal),
+    chaptersRead: chaptersTotalOut > 0 ? Math.min(chaptersReadOut, chaptersTotalOut) : chaptersReadOut,
+    chaptersTotal: chaptersTotalOut,
     url: cleanStr(raw.url, 500),
     cover: cleanStr(raw.cover, 1000),
     notes: cleanStr(raw.notes, 2000),
@@ -456,6 +671,32 @@ function normalizeStory(raw, { keepId = false, keepTimestamps = false, strict = 
     createdAt: keepTimestamps && Number.isFinite(createdAtRaw) ? createdAtRaw : now,
     updatedAt: keepTimestamps && Number.isFinite(updatedAtRaw) ? updatedAtRaw : now
   };
+}
+
+function findDuplicateStory(stories, title, exceptId = '') {
+  const key = titleKey(title);
+  if (!key) return null;
+  const skip = String(exceptId).toLowerCase();
+  return (
+    stories.find((s) => String(s.id).toLowerCase() !== skip && titleKey(s.title) === key) || null
+  );
+}
+
+function duplicateStoryError(story, existing) {
+  return new HttpError(
+    409,
+    `Cerita dengan judul "${story.title}" sudah ada di rakmu.`,
+    {
+      duplicate: true,
+      story: {
+        id: existing.id,
+        title: existing.title,
+        author: existing.author,
+        status: existing.status,
+        url: existing.url
+      }
+    }
+  );
 }
 
 function parseAccountDoc(parsed) {
@@ -1033,15 +1274,17 @@ async function limitedFetch(url, { timeoutMs = FETCH_TIMEOUT_MS, maxBytes = FETC
         }
         chunks.push(value);
       }
+      noteWattpadSuccess();
       return Buffer.concat(chunks).toString('utf8');
     }
     throw new HttpError(502, 'Terlalu banyak pengalihan dari Wattpad.');
   } catch (err) {
-    if (err instanceof HttpError) throw err;
-    if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
-      throw new HttpError(504, 'Wattpad tidak merespons tepat waktu. Coba lagi.');
-    }
-    throw new HttpError(502, 'Gagal menghubungi Wattpad. Periksa koneksi internet.');
+    let out;
+    if (err instanceof HttpError) out = err;
+    else if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) out = new HttpError(504, 'Wattpad tidak merespons tepat waktu. Coba lagi.');
+    else out = new HttpError(502, 'Gagal menghubungi Wattpad. Periksa koneksi internet.');
+    noteWattpadFailure(out);
+    throw out;
   } finally {
     clearTimeout(timer);
   }
@@ -1327,6 +1570,19 @@ function trimMap(map, max) {
 }
 
 async function routeApi(req, res, pathname) {
+  if (pathname === '/api/health') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      return send(res, 405, { error: 'Metode tidak diizinkan.' });
+    }
+    return send(res, 200, {
+      ok: true,
+      service: 'hideo-wattpad',
+      startedAt: STARTED_AT,
+      uptimeSec: Math.floor((Date.now() - STARTED_AT) / 1000),
+      lastHeartbeat: (await readHeartbeat())?.lastSeen ?? 0
+    });
+  }
+
   const partsMatch = pathname.match(/^\/api\/wattpad\/(\d{1,20})\/parts$/);
   if (partsMatch) {
     if (req.method !== 'GET') return send(res, 405, { error: 'Metode tidak diizinkan.' });
@@ -1618,6 +1874,8 @@ async function routeApi(req, res, pathname) {
       if (acct.stories.length >= MAX_STORIES) {
         throw new HttpError(409, `Maksimal ${MAX_STORIES} cerita.`);
       }
+      const duplicate = findDuplicateStory(acct.stories, story.title);
+      if (duplicate) throw duplicateStoryError(story, duplicate);
       acct.stories.push(story);
       await saveAccount(user.id);
       return send(res, 201, { story });
@@ -1661,6 +1919,7 @@ async function routeApi(req, res, pathname) {
     const st = acct.stories.find((s) => s.id.toLowerCase() === sid);
     if (st && entry.latest > 0) {
       st.chaptersTotal = entry.latest;
+      if (toInt(st.chaptersRead) > entry.latest) st.chaptersRead = entry.latest;
       st.updatedAt = Date.now();
       await saveAccount(user.id);
     }
@@ -1678,7 +1937,12 @@ async function routeApi(req, res, pathname) {
     }
     if (req.method === 'PUT') {
       const body = await readJsonBody(req);
-      const updated = normalizeStory({ ...acct.stories[index], ...body }, { keepId: true, keepTimestamps: true, strict: true });
+      const { id: _spoofed, ...patch } = body || {};
+      const current = acct.stories[index];
+      const updated = normalizeStory({ ...current, ...patch }, { keepId: true, keepTimestamps: true, strict: true });
+      updated.id = current.id;
+      const duplicate = findDuplicateStory(acct.stories, updated.title, current.id);
+      if (duplicate) throw duplicateStoryError(updated, duplicate);
       updated.updatedAt = Date.now();
       acct.stories[index] = updated;
       await saveAccount(user.id);
@@ -1724,7 +1988,9 @@ const server = http.createServer(async (req, res) => {
     const status = err instanceof HttpError ? err.status : 500;
     if (status === 500) console.error('[server]', err);
     if (!res.headersSent) {
-      return send(res, status, { error: status === 500 ? 'Terjadi kesalahan internal.' : err.message });
+      const payload = { error: status === 500 ? 'Terjadi kesalahan internal.' : err.message };
+      if (err instanceof HttpError && err.data) Object.assign(payload, err.data);
+      return send(res, status, payload);
     }
     res.destroy();
   }
@@ -1736,19 +2002,29 @@ server.headersTimeout = 10_000;
 process.on('unhandledRejection', (err) => console.error('[unhandled]', err));
 
 let shuttingDown = false;
-async function shutdown() {
+async function shutdown(reason) {
   if (shuttingDown) return;
   shuttingDown = true;
+  const prev = await readHeartbeat();
+  const downtimeMs = prev && prev.lastSeen ? Math.max(0, Date.now() - prev.lastSeen) : 0;
   console.log('\nMenyimpan data sebelum keluar...');
   const timeout = new Promise((r) => setTimeout(r, 2500).unref());
   await Promise.race([
-    Promise.all([saveChain, writeHeartbeat({ cleaned: true }), sendOwnerStatusMessage('down')]),
+    Promise.all([
+      saveChain,
+      writeHeartbeat({ cleaned: true, reason: reason || 'stop' }),
+      sendOwnerStatusMessage('down', { downtimeMs })
+    ]),
     timeout
   ]);
   process.exit(0);
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('uncaughtException', (err) => {
+  console.error('[fatal]', err);
+  shutdown('uncaughtException').catch(() => process.exit(1));
+});
 
 (async () => {
   await fsp.mkdir(DATA_DIR, { recursive: true });
@@ -1771,12 +2047,25 @@ process.on('SIGTERM', shutdown);
     console.log('');
     (async () => {
       const prev = await readHeartbeat();
-      const stale = prev && Date.now() - prev.lastSeen > HEARTBEAT_INTERVAL_MS * 2;
-      await writeHeartbeat({ cleaned: false });
-      if (stale && !prev.cleaned) {
-        await sendOwnerStatusMessage('down');
+      const now = Date.now();
+      const downtimeMs = prev && prev.lastSeen ? Math.max(0, now - prev.lastSeen) : 0;
+      const crashedUnclean = Boolean(prev) && (!prev.cleaned || prev.reason === 'uncaughtException');
+      const monitor = readMonitorState();
+      const monitorLive = monitor && Number.isFinite(monitor.checkedAt) && now - monitor.checkedAt < MONITOR_STALE_MS;
+      await writeHeartbeat({ cleaned: false, downNotifiedAt: prev?.downNotifiedAt || 0, upNotifiedAt: now });
+
+      if (monitorLive) {
+        console.log('  Monitor eksternal aktif — notifikasi status ditangani monitor.');
+        return;
       }
-      sendOwnerStatusMessage('up').catch(() => {});
+
+      if (crashedUnclean && downtimeMs > HEARTBEAT_INTERVAL_MS && now - (prev.downNotifiedAt || 0) > STATUS_DOWN_COOLDOWN_MS) {
+        await sendOwnerStatusMessage('down', { downtimeMs });
+        await writeHeartbeat({ downNotifiedAt: now });
+      }
+      if (now - (prev?.upNotifiedAt || 0) > STATUS_UP_COOLDOWN_MS) {
+        sendOwnerStatusMessage('up', { downtimeMs }).catch(() => {});
+      }
     })();
   });
   setInterval(() => writeHeartbeat({ cleaned: false }).catch(() => {}), HEARTBEAT_INTERVAL_MS).unref();

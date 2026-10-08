@@ -1166,9 +1166,25 @@ max-height: calc(100vh - 32px);
   margin: 0 auto 16px;
 }
 .confirm-icon svg { width: 28px; height: 28px; color: var(--red); }
+.confirm-icon.warn { background: rgba(251, 191, 36, 0.12); }
+.confirm-icon.warn svg { color: var(--amber); }
 .confirm { text-align: center; padding: 28px 24px 20px; }
 .confirm h2 { font-size: 1.1rem; font-weight: 750; margin-bottom: 6px; }
 .confirm p { font-size: 0.85rem; color: var(--muted); }
+
+.dup-meta {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+.dup-meta strong { font-size: 0.88rem; font-weight: 700; overflow-wrap: anywhere; }
+.dup-meta span { font-size: 0.76rem; color: var(--muted); text-transform: capitalize; }
 
 .new-list-form {
   display: flex;

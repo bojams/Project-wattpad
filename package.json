@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "monitor": "node monitor.js",
+    "monitor:once": "node monitor.js --once"
   },
   "engines": {
     "node": ">=18"
