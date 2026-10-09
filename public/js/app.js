@@ -203,6 +203,11 @@
     discordStatusDot: $('#discordStatusDot'),
     discordStatusText: $('#discordStatusText'),
     btnDiscordSave: $('#btnDiscordSave'),
+    ownerAlertSection: $('#ownerAlertSection'),
+    btnTestAlertWebhook: $('#btnTestAlertWebhook'),
+    alertStatusDot: $('#alertStatusDot'),
+    alertStatusText: $('#alertStatusText'),
+    alertError: $('#alertError'),
     deleteAccountForm: $('#deleteAccountForm'),
     deletePwd: $('#deletePwd'),
     deleteError: $('#deleteError'),
@@ -2183,6 +2188,13 @@ reader.celebrated = false;
     els.checkIntervalMin.value = String(state.user.checkIntervalMin || 15);
     els.discordError.hidden = true;
     setWebhookStatus(hasDiscord ? 'untested' : 'off', hasDiscord ? 'Memeriksa status webhook…' : 'Webhook belum diatur');
+    const owner = !!state.user.isOwner;
+    els.ownerAlertSection.hidden = !owner;
+    if (owner) {
+      els.alertError.hidden = true;
+      els.btnTestAlertWebhook.disabled = false;
+      setAlertStatus('off', 'Belum diuji');
+    }
     applyUserIdentity(state.user);
     openModal(els.profileModal);
     if (hasDiscord) {
@@ -2476,6 +2488,28 @@ reader.celebrated = false;
       toast('error', err.message);
     } finally {
       els.btnTestWebhook.disabled = false;
+    }
+  });
+
+  function setAlertStatus(state, text) {
+    els.alertStatusDot.dataset.state = state || 'off';
+    els.alertStatusText.textContent = text || '';
+  }
+
+  els.btnTestAlertWebhook.addEventListener('click', async () => {
+    if (!state.user || !state.user.isOwner) return;
+    els.btnTestAlertWebhook.disabled = true;
+    els.alertError.hidden = true;
+    setAlertStatus('testing', 'Mengirim pesan uji ke webhook server…');
+    try {
+      await request('/api/auth/test-alert-webhook', { method: 'POST', json: {} });
+      setAlertStatus('ok', 'Berhasil! Pesan uji terkirim ke webhook server.');
+      toast('success', 'Webhook server berfungsi. Cek channel Discord alert.');
+    } catch (err) {
+      setAlertStatus('err', err.message);
+      toast('error', err.message);
+    } finally {
+      els.btnTestAlertWebhook.disabled = false;
     }
   });
 

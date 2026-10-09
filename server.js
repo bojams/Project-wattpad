@@ -120,9 +120,10 @@ const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK_URL || '';
 const ALERT_ROLE_ID = /^<?@?!?\d{15,25}>?$/.test(String(process.env.ALERT_ROLE_ID || '').trim())
   ? String(process.env.ALERT_ROLE_ID).trim().replace(/^<@!?>|>$/g, '')
   : '';
-// Alert gangguan (server down / upstream Wattpad) dimatikan secara default.
-// Notifikasi hanya dikirim saat ada update cerita. Set STATUS_ALERTS_ENABLED=1 untuk mengaktifkan lagi.
-const STATUS_ALERTS_ENABLED = String(process.env.STATUS_ALERTS_ENABLED || '').trim() === '1';
+// Alert gangguan (server down / upstream Wattpad) dikirim ke ALERT_WEBHOOK_URL.
+// Notifikasi update cerita hanya dikirim ke webhook milik user (pengaturan), bukan ke ALERT_WEBHOOK.
+// Set STATUS_ALERTS_ENABLED=0 untuk mematikan alert gangguan.
+const STATUS_ALERTS_ENABLED = String(process.env.STATUS_ALERTS_ENABLED || '').trim() !== '0';
 const WATTPAD_ALERT_FAIL_THRESHOLD = Math.max(1, Number(process.env.WATTPAD_ALERT_FAIL_THRESHOLD || 5) || 5);
 const WATTPAD_ALERT_COOLDOWN_MS = Math.max(1, Number(process.env.WATTPAD_ALERT_COOLDOWN_MIN || 15) || 15) * 60_000;
 const HEARTBEAT_FILE = path.join(DATA_DIR, 'heartbeat.json');
@@ -276,17 +277,10 @@ async function checkUpdatesForUser(user, limit = UPDATE_CHECK_LIMIT) {
 
 async function sendDiscordUpdates(user, updates, checked) {
   if (!updates.length) return;
-  const targets = [];
-  const seen = new Set();
-  const add = (url, roleId) => {
-    if (!url || !isValidDiscordWebhook(url) || seen.has(url)) return;
-    seen.add(url);
-    targets.push({ url, roleId: roleId || '' });
-  };
-  add(user.discordWebhook, user.discordRoleId);
-  add(ALERT_WEBHOOK, ALERT_ROLE_ID);
-  if (!targets.length) add(DISCORD_WEBHOOK, '');
-  if (!targets.length) return;
+  // Update cerita HANYA dikirim ke webhook yang diisi user di pengaturan.
+  const webhookUrl = user.discordWebhook;
+  if (!webhookUrl || !isValidDiscordWebhook(webhookUrl)) return;
+  const roleId = user.discordRoleId || '';
   const lines = updates.map((u) => {
     const name = u.title || 'Cerita';
     const progress = u.old + ' → ' + u.latest + ' bab';
@@ -304,7 +298,7 @@ async function sendDiscordUpdates(user, updates, checked) {
     footer: { text: 'Hideo Wattpad — ' + (user.email || '') },
     timestamp: new Date().toISOString()
   };
-  await Promise.allSettled(targets.map(({ url, roleId }) => sendUpdateEmbed(url, roleId, embed)));
+  await sendUpdateEmbed(webhookUrl, roleId, embed);
 }
 
 async function sendUpdateEmbed(webhookUrl, roleId, embed) {
@@ -826,7 +820,7 @@ function verifyPasswordHash(password, userOrNull) {
 }
 
 function isValidDiscordWebhook(url) {
-  if (!url) return true;
+  if (!url) return false;
   try {
     const u = new URL(url);
     if (u.protocol !== 'https:') return false;
@@ -923,7 +917,7 @@ function verifyToken(token) {
 }
 
 function publicUser(user) {
-  return { email: user.email, name: user.name || '', photo: user.photo || '', discordWebhook: user.discordWebhook || '', discordRoleId: user.discordRoleId || '', checkIntervalMin: checkIntervalOf(user) };
+  return { email: user.email, name: user.name || '', photo: user.photo || '', discordWebhook: user.discordWebhook || '', discordRoleId: user.discordRoleId || '', checkIntervalMin: checkIntervalOf(user), isOwner: isOwner(user) };
 }
 
 async function applyPhotoUpdate(user, raw) {
@@ -962,6 +956,16 @@ function getSessionUser(req) {
 function requireUser(req) {
   const user = getSessionUser(req);
   if (!user) throw new HttpError(401, 'Silakan login terlebih dahulu.');
+  return user;
+}
+
+function isOwner(user) {
+  return Boolean(user) && user.email === OWNER_NOTIFY_EMAIL;
+}
+
+function requireOwner(req) {
+  const user = requireUser(req);
+  if (!isOwner(user)) throw new HttpError(403, 'Fitur ini khusus admin.');
   return user;
 }
 
@@ -1704,36 +1708,79 @@ async function routeApi(req, res, pathname) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
-      const resp = await fetch(webhook, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: ctrl.signal,
-        body: JSON.stringify({
-          username: 'Hideo Wattpad',
-          avatar_url: SITE_URL + '/favicon.svg',
-          content: '',
-          embeds: [
-            {
-              title: '🧪 Uji Webhook',
-              description: 'Webhook kamu berfungsi! Notifikasi update cerita akan terkirim ke sini.',
-              color: 3066993,
-              footer: { text: 'Hideo Wattpad — ' + (user.email || '') },
-              timestamp: new Date().toISOString()
-            }
-          ]
-        })
-      });
-      clearTimeout(timer);
-      if (!resp.ok) {
-        const msg = resp.status === 401 || resp.status === 403 || resp.status === 404
-          ? 'Webhook tidak valid atau telah dihapus (HTTP ' + resp.status + ').'
-          : 'Discord menolak pengiriman (HTTP ' + resp.status + ').';
-        throw new HttpError(400, msg);
+      try {
+        const resp = await fetch(webhook, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: ctrl.signal,
+          body: JSON.stringify({
+            username: 'Hideo Wattpad',
+            avatar_url: SITE_URL + '/favicon.svg',
+            content: '',
+            embeds: [
+              {
+                title: '🧪 Uji Webhook',
+                description: 'Webhook kamu berfungsi! Notifikasi update cerita akan terkirim ke sini.',
+                color: 3066993,
+                footer: { text: 'Hideo Wattpad — ' + (user.email || '') },
+                timestamp: new Date().toISOString()
+              }
+            ]
+          })
+        });
+        if (!resp.ok) {
+          const msg = resp.status === 401 || resp.status === 403 || resp.status === 404
+            ? 'Webhook tidak valid atau telah dihapus (HTTP ' + resp.status + ').'
+            : 'Discord menolak pengiriman (HTTP ' + resp.status + ').';
+          throw new HttpError(400, msg);
+        }
+        return send(res, 200, { ok: true });
+      } finally {
+        clearTimeout(timer);
       }
-      return send(res, 200, { ok: true });
     } catch (err) {
       if (err instanceof HttpError) throw err;
       throw new HttpError(400, 'Gagal terhubung ke Discord. Periksa kembali URL webhook.');
+    }
+  }
+
+  if (pathname === '/api/auth/test-alert-webhook') {
+    requireOwner(req);
+    if (req.method !== 'POST') return send(res, 405, { error: 'Metode tidak diizinkan.' });
+    rateLimit(req, 10);
+    const { webhook } = alertTarget();
+    if (!webhook) throw new HttpError(400, 'Webhook alert server belum dikonfigurasi.');
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        const resp = await fetch(webhook, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: ctrl.signal,
+          body: JSON.stringify({
+            username: 'Hideo Wattpad',
+            avatar_url: SITE_URL + '/favicon.svg',
+            embeds: [
+              {
+                title: '🧪 Uji Webhook Server',
+                description: 'Webhook alert server berfungsi! Notifikasi gangguan server akan dikirim ke sini.',
+                color: 3066993,
+                fields: [{ name: 'Situs', value: statusSiteLink(), inline: true }],
+                footer: { text: 'Hideo Wattpad — Status Server' },
+                timestamp: new Date().toISOString()
+              }
+            ]
+          })
+        });
+        if (!resp.ok) throw new HttpError(400, 'Discord menolak pengiriman (HTTP ' + resp.status + ').');
+        return send(res, 200, { ok: true });
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      throw new HttpError(400, 'Gagal terhubung ke Discord. Periksa kembali webhook alert server.');
     }
   }
 
@@ -1750,18 +1797,21 @@ async function routeApi(req, res, pathname) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
-      const resp = await fetch(webhook, { method: 'GET', signal: ctrl.signal });
-      clearTimeout(timer);
-      if (resp.ok) {
-        ok = true;
-      } else if (resp.status === 401 || resp.status === 404) {
-        reason = 'Webhook tidak ditemukan — webhook telah dihapus atau tautan salah.';
-      } else if (resp.status === 403) {
-        reason = 'Akses ditolak Discord (403) — webhook kehilangan izin.';
-      } else if (resp.status === 429) {
-        reason = 'Terkena rate limit Discord (429) — terlalu banyak pesan. Tunggu sebentar lalu uji lagi.';
-      } else {
-        reason = 'Discord merespons tidak normal (HTTP ' + resp.status + ').';
+      try {
+        const resp = await fetch(webhook, { method: 'GET', signal: ctrl.signal });
+        if (resp.ok) {
+          ok = true;
+        } else if (resp.status === 401 || resp.status === 404) {
+          reason = 'Webhook tidak ditemukan — webhook telah dihapus atau tautan salah.';
+        } else if (resp.status === 403) {
+          reason = 'Akses ditolak Discord (403) — webhook kehilangan izin.';
+        } else if (resp.status === 429) {
+          reason = 'Terkena rate limit Discord (429) — terlalu banyak pesan. Tunggu sebentar lalu uji lagi.';
+        } else {
+          reason = 'Discord merespons tidak normal (HTTP ' + resp.status + ').';
+        }
+      } finally {
+        clearTimeout(timer);
       }
     } catch (err) {
       reason = err && err.name === 'AbortError'
@@ -2009,11 +2059,14 @@ async function shutdown(reason) {
   const downtimeMs = prev && prev.lastSeen ? Math.max(0, Date.now() - prev.lastSeen) : 0;
   console.log('\nMenyimpan data sebelum keluar...');
   const timeout = new Promise((r) => setTimeout(r, 2500).unref());
+  const crashAlert = reason === 'uncaughtException'
+    ? sendOwnerStatusMessage('down', { downtimeMs })
+    : Promise.resolve();
   await Promise.race([
     Promise.all([
       saveChain,
       writeHeartbeat({ cleaned: true, reason: reason || 'stop' }),
-      sendOwnerStatusMessage('down', { downtimeMs })
+      crashAlert
     ]),
     timeout
   ]);
@@ -2050,9 +2103,10 @@ process.on('uncaughtException', (err) => {
       const now = Date.now();
       const downtimeMs = prev && prev.lastSeen ? Math.max(0, now - prev.lastSeen) : 0;
       const crashedUnclean = Boolean(prev) && (!prev.cleaned || prev.reason === 'uncaughtException');
+      const gracefulRestart = Boolean(prev) && !crashedUnclean;
       const monitor = readMonitorState();
       const monitorLive = monitor && Number.isFinite(monitor.checkedAt) && now - monitor.checkedAt < MONITOR_STALE_MS;
-      await writeHeartbeat({ cleaned: false, downNotifiedAt: prev?.downNotifiedAt || 0, upNotifiedAt: now });
+      await writeHeartbeat({ cleaned: false, downNotifiedAt: prev?.downNotifiedAt || 0, upNotifiedAt: now, gracefulAt: gracefulRestart ? now : 0 });
 
       if (monitorLive) {
         console.log('  Monitor eksternal aktif — notifikasi status ditangani monitor.');

@@ -39,8 +39,8 @@ const ALERT_WEBHOOK = process.env.ALERT_WEBHOOK_URL || '';
 const ALERT_ROLE_ID = /^<?@?!?\d{15,25}>?$/.test(String(process.env.ALERT_ROLE_ID || '').trim())
   ? String(process.env.ALERT_ROLE_ID).trim().replace(/^<@!?>|>$/g, '')
   : '';
-// Alert status server dimatikan secara default (hanya notifikasi update cerita).
-const STATUS_ALERTS_ENABLED = String(process.env.STATUS_ALERTS_ENABLED || '').trim() === '1';
+// Alert status server dikirim ke ALERT_WEBHOOK_URL. Set STATUS_ALERTS_ENABLED=0 untuk mematikan.
+const STATUS_ALERTS_ENABLED = String(process.env.STATUS_ALERTS_ENABLED || '').trim() !== '0';
 
 const INTERVAL_MS = Math.max(5, Number(process.env.MONITOR_INTERVAL_SEC || 15) || 15) * 1000;
 const FAIL_THRESHOLD = Math.max(1, Number(process.env.MONITOR_FAIL_THRESHOLD || 3) || 3);
@@ -135,7 +135,7 @@ function heartbeatInfo() {
   try {
     const raw = JSON.parse(fs.readFileSync(HEARTBEAT_FILE, 'utf8'));
     if (raw && Number.isFinite(raw.lastSeen)) {
-      return { lastSeen: raw.lastSeen, reason: typeof raw.reason === 'string' ? raw.reason : '', cleaned: raw.cleaned === true };
+      return { lastSeen: raw.lastSeen, reason: typeof raw.reason === 'string' ? raw.reason : '', cleaned: raw.cleaned === true, gracefulAt: Number.isFinite(raw.gracefulAt) ? raw.gracefulAt : 0 };
     }
   } catch {}
   return null;
@@ -258,6 +258,12 @@ function recordRestart(startedAt) {
   if (!startedAt) return;
   const now = Date.now();
   state.restarts = state.restarts.filter((r) => Number.isFinite(r.startedAt) && now - r.at < CRASH_WINDOW_MS);
+  const hb = heartbeatInfo();
+  const graceful =
+    hb &&
+    ((hb.cleaned === true && hb.reason !== 'uncaughtException') ||
+      (hb.gracefulAt && Math.abs(startedAt - hb.gracefulAt) < 120000));
+  if (graceful) return;
   const last = state.restarts[state.restarts.length - 1];
   if (!last || last.startedAt !== startedAt) state.restarts.push({ startedAt, at: now });
 }
